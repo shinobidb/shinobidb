@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+import cliProgress from 'cli-progress';
 import { Command } from 'commander';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8')) as {
@@ -13,7 +14,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig } from './core/config-loader.js';
 import { executeMask, executeDryRun } from './core/mask-executor.js';
-import type { DryRunResult } from './core/mask-executor.js';
+import type { DryRunResult, ProgressInfo } from './core/mask-executor.js';
 import { diffScans } from './core/scan-diff.js';
 import { scan } from './core/scanner.js';
 import { saveSnapshot, loadSnapshot } from './core/snapshot.js';
@@ -242,6 +243,8 @@ program
   .option('--sample-rows <n>', 'Number of sample rows for dry-run (0 for all)', parseInt)
   .option('--json', 'Output dry-run results as JSON')
   .option('--sync-schema', 'Auto-create missing tables in target from source schema')
+  .option('--concurrency <n>', 'Number of tables to process in parallel', parseInt, 1)
+  .option('--no-progress', 'Disable progress bar')
   .action(
     async (opts: {
       config: string;
@@ -251,6 +254,8 @@ program
       sampleRows?: number;
       json?: boolean;
       syncSchema?: boolean;
+      concurrency: number;
+      progress: boolean;
     }) => {
       const config = await loadConfig(resolve(opts.config));
 
@@ -299,9 +304,43 @@ program
           await source.connect();
           await target.connect();
 
+          const showProgress = opts.progress && !opts.json && process.stderr.isTTY;
+          let progressBar: cliProgress.SingleBar | undefined;
+
+          const onProgress = showProgress
+            ? (info: ProgressInfo) => {
+                if (!progressBar) {
+                  progressBar = new cliProgress.SingleBar(
+                    {
+                      format:
+                        '{bar} {percentage}% | {value}/{total} rows | {currentTable} | {tablesCompleted}/{tablesTotal} tables',
+                      hideCursor: true,
+                    },
+                    cliProgress.Presets.shades_classic,
+                  );
+                  progressBar.start(info.totalRows || 1, 0, {
+                    currentTable: info.currentTable,
+                    tablesCompleted: 0,
+                    tablesTotal: info.tablesTotal,
+                  });
+                }
+                progressBar.update(Math.min(info.processedRows, info.totalRows || 1), {
+                  currentTable: info.currentTable,
+                  tablesCompleted: info.tablesCompleted,
+                  tablesTotal: info.tablesTotal,
+                });
+              }
+            : undefined;
+
           const result = await executeMask(source, target, config, registry, {
             syncSchema: opts.syncSchema,
+            concurrency: opts.concurrency,
+            onProgress,
           });
+
+          if (progressBar) {
+            progressBar.stop();
+          }
 
           logger.output(
             `Masked ${result.rowsProcessed} row(s) across ${result.tablesProcessed} table(s)`,

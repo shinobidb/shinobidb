@@ -651,3 +651,105 @@ describe('executeMask syncSchema', () => {
     expect(target.createTable).not.toHaveBeenCalled();
   });
 });
+
+describe('executeMask concurrency', () => {
+  const registry = createDefaultRegistry();
+
+  it('should process multiple tables in parallel with concurrency > 1', async () => {
+    const executionOrder: string[] = [];
+    const source = createMockAdapter();
+    (source.readRows as jest.Mock).mockImplementation(
+      async (
+        _s: string,
+        table: string,
+        _b: number,
+        onBatch: (rows: Record<string, unknown>[]) => Promise<void>,
+      ) => {
+        executionOrder.push(`start:${table}`);
+        await onBatch([{ id: 1, email: `test@${table}.com`, first_name: 'Test' }]);
+        executionOrder.push(`end:${table}`);
+      },
+    );
+
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+        },
+        {
+          schema: 'db',
+          table: 'orders',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+        },
+      ],
+    });
+
+    const result = await executeMask(source, target, config, registry, { concurrency: 4 });
+
+    expect(result.tablesProcessed).toBe(2);
+    expect(result.rowsWritten).toBe(2);
+  });
+
+  it('should default to sequential processing (concurrency 1)', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'a@test.com', first_name: 'A' }]]);
+    const target = createMockAdapter();
+    const config = makeConfig();
+
+    const result = await executeMask(source, target, config, registry);
+
+    expect(result.tablesProcessed).toBe(1);
+    expect(result.rowsWritten).toBe(1);
+  });
+});
+
+describe('executeMask progress', () => {
+  const registry = createDefaultRegistry();
+
+  it('should call onProgress callback during execution', async () => {
+    const source = createMockAdapter([
+      [
+        { id: 1, email: 'a@test.com', first_name: 'A' },
+        { id: 2, email: 'b@test.com', first_name: 'B' },
+      ],
+    ]);
+    (source.getRowCount as jest.Mock).mockResolvedValue(2);
+
+    const target = createMockAdapter();
+    const config = makeConfig();
+    const progressCalls: Array<{ processedRows: number; currentTable: string }> = [];
+
+    await executeMask(source, target, config, registry, {
+      onProgress: (info) => {
+        progressCalls.push({
+          processedRows: info.processedRows,
+          currentTable: info.currentTable,
+        });
+      },
+    });
+
+    expect(progressCalls.length).toBeGreaterThan(0);
+    const lastCall = progressCalls[progressCalls.length - 1]!;
+    expect(lastCall.processedRows).toBe(2);
+    expect(lastCall.currentTable).toBe('test_db.users');
+  });
+
+  it('should report total estimated rows', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'a@test.com', first_name: 'A' }]]);
+    (source.getRowCount as jest.Mock).mockResolvedValue(100);
+
+    const target = createMockAdapter();
+    const config = makeConfig();
+    let totalRows = 0;
+
+    await executeMask(source, target, config, registry, {
+      onProgress: (info) => {
+        totalRows = info.totalRows;
+      },
+    });
+
+    expect(totalRows).toBe(100);
+  });
+});

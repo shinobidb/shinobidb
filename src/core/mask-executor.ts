@@ -1,3 +1,5 @@
+import pLimit from 'p-limit';
+
 import type { ShinobiConfig, TableMaskConfig } from '../config/types.js';
 import type { DatabaseAdapter } from '../db/types.js';
 import type { StrategyRegistry } from '../masking/strategy-registry.js';
@@ -29,8 +31,20 @@ export interface DryRunResult {
   totalRows: number;
 }
 
+export interface ProgressInfo {
+  totalRows: number;
+  processedRows: number;
+  currentTable: string;
+  tablesTotal: number;
+  tablesCompleted: number;
+}
+
+export type ProgressCallback = (info: ProgressInfo) => void;
+
 export interface MaskExecuteOptions {
   syncSchema?: boolean;
+  concurrency?: number;
+  onProgress?: ProgressCallback;
 }
 
 export async function executeMask(
@@ -46,13 +60,37 @@ export async function executeMask(
     rowsWritten: 0,
   };
 
-  logger.info(`Starting mask: ${config.tables.length} table(s) to process`);
+  const tableCount = config.tables.length;
+  logger.info(`Starting mask: ${tableCount} table(s) to process`);
 
   // MySQL and MongoDB use database name as schema; PostgreSQL uses real schema names
   const targetSchema = config.target.type === 'postgres' ? undefined : config.target.database;
 
+  // Estimate total rows for progress
+  let totalEstimatedRows = 0;
+  if (options.onProgress) {
+    const estimates = await Promise.all(
+      config.tables.map((t) => source.getRowCount(t.schema, t.table)),
+    );
+    totalEstimatedRows = estimates.reduce((sum, n) => sum + n, 0);
+  }
+
+  const emitProgress = (currentTable: string) => {
+    options.onProgress?.({
+      totalRows: totalEstimatedRows,
+      processedRows: result.rowsProcessed,
+      currentTable,
+      tablesTotal: tableCount,
+      tablesCompleted: result.tablesProcessed,
+    });
+  };
+
+  // Pre-check: ensure all target tables exist (or create them)
+  // This must be sequential before parallel processing starts
+  const tableSchemaMap = new Map<string, string>();
   for (const tableConfig of config.tables) {
     const targetSchemaName = targetSchema ?? tableConfig.schema;
+    tableSchemaMap.set(`${tableConfig.schema}.${tableConfig.table}`, targetSchemaName);
 
     const exists = await target.tableExists(targetSchemaName, tableConfig.table);
     if (!exists) {
@@ -73,14 +111,49 @@ export async function executeMask(
       logger.debug(`Truncating target: ${targetSchemaName}.${tableConfig.table}`);
       await target.truncateTable(targetSchemaName, tableConfig.table);
     }
-
-    if (tableConfig.copyOnly) {
-      await copyTable(source, target, tableConfig, targetSchemaName, config, result);
-    } else {
-      await processTable(source, target, tableConfig, targetSchemaName, config, registry, result);
-    }
-    result.tablesProcessed++;
   }
+
+  const concurrency = options.concurrency ?? 1;
+  const limit = pLimit(concurrency);
+
+  const tasks = config.tables.map((tableConfig) => {
+    const targetSchemaName = tableSchemaMap.get(`${tableConfig.schema}.${tableConfig.table}`)!;
+
+    return limit(async () => {
+      const tableResult: MaskResult = {
+        tablesProcessed: 0,
+        rowsProcessed: 0,
+        rowsWritten: 0,
+      };
+
+      const onBatchDone = (rowCount: number) => {
+        tableResult.rowsProcessed += rowCount;
+        tableResult.rowsWritten += rowCount;
+        result.rowsProcessed += rowCount;
+        result.rowsWritten += rowCount;
+        emitProgress(`${tableConfig.schema}.${tableConfig.table}`);
+      };
+
+      if (tableConfig.copyOnly) {
+        await copyTable(source, target, tableConfig, targetSchemaName, config, onBatchDone);
+      } else {
+        await processTable(
+          source,
+          target,
+          tableConfig,
+          targetSchemaName,
+          config,
+          registry,
+          onBatchDone,
+        );
+      }
+
+      result.tablesProcessed++;
+      emitProgress(`${tableConfig.schema}.${tableConfig.table}`);
+    });
+  });
+
+  await Promise.all(tasks);
 
   logger.success(
     `Mask complete: ${result.tablesProcessed} table(s), ${result.rowsProcessed} row(s) processed, ${result.rowsWritten} row(s) written`,
@@ -139,7 +212,7 @@ async function copyTable(
   tableConfig: TableMaskConfig,
   targetSchema: string,
   config: ShinobiConfig,
-  result: MaskResult,
+  onBatchDone: (rowCount: number) => void,
 ): Promise<void> {
   const { schema, table } = tableConfig;
   logger.info(`Copying ${schema}.${table} → ${targetSchema}.${table} (no masking)`);
@@ -147,9 +220,8 @@ async function copyTable(
   await source.readRows(schema, table, config.options.batchSize, async (rows) => {
     if (rows.length > 0) {
       await target.writeRows(targetSchema, table, rows);
-      result.rowsWritten += rows.length;
     }
-    result.rowsProcessed += rows.length;
+    onBatchDone(rows.length);
   });
 }
 
@@ -160,24 +232,25 @@ async function processTable(
   targetSchema: string,
   config: ShinobiConfig,
   registry: StrategyRegistry,
-  result: MaskResult,
+  onBatchDone: (rowCount: number) => void,
 ): Promise<void> {
   const { schema, table, columns } = tableConfig;
+  let rowIndex = 0;
   logger.info(
     `Processing ${schema}.${table} → ${targetSchema}.${table} (${columns.length} column(s) to mask)`,
   );
 
   await source.readRows(schema, table, config.options.batchSize, async (rows) => {
-    const maskedRows = rows.map((row, rowIndex) =>
-      maskRow(row, tableConfig, config, registry, result.rowsProcessed + rowIndex),
+    const maskedRows = rows.map((row, i) =>
+      maskRow(row, tableConfig, config, registry, rowIndex + i),
     );
 
     if (maskedRows.length > 0) {
       await target.writeRows(targetSchema, table, maskedRows);
-      result.rowsWritten += maskedRows.length;
     }
 
-    result.rowsProcessed += rows.length;
+    rowIndex += rows.length;
+    onBatchDone(rows.length);
   });
 }
 
