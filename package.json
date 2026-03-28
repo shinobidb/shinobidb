@@ -31,11 +31,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tsubotsubo2/shinobidb.git"
+    "url": "https://github.com/shinobidb/shinobidb.git"
   },
-  "homepage": "https://github.com/tsubotsubo2/shinobidb#readme",
+  "homepage": "https://github.com/shinobidb/shinobidb#readme",
   "bugs": {
-    "url": "https://github.com/tsubotsubo2/shinobidb/issues"
+    "url": "https://github.com/shinobidb/shinobidb/issues"
   },
   "scripts": {
     "lint": "eslint .",
