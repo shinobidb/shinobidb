@@ -5,7 +5,7 @@ Production database data masking tool for staging environments. Scans your datab
 ## Requirements
 
 - Node.js >= 18
-- MySQL 8.0+ or PostgreSQL 14+
+- MySQL 8.0+, PostgreSQL 14+, or MongoDB 5.0+
 
 ## Installation
 
@@ -43,7 +43,7 @@ Connects to the database, reads the schema, and detects PII columns by column na
 ```bash
 shinobidb scan \
   --host <host> --port <port> --user <user> --password <password> \
-  [--type mysql|postgres] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] [--json]
+  [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] [--json]
 ```
 
 Output includes detected columns with category, confidence score, and suggested masking strategy.
@@ -55,7 +55,7 @@ Runs a scan and generates a `shinobidb.yaml` config file with masking rules pre-
 ```bash
 shinobidb config \
   --host <host> --port <port> --user <user> --password <password> \
-  [--type mysql|postgres] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
+  [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
   [--min-confidence <0.0-1.0>] [-o <file>]
 ```
 
@@ -166,7 +166,8 @@ src/
 │   ├── types.ts            # DatabaseAdapter interface
 │   ├── factory.ts          # Adapter factory
 │   ├── mysql/              # MySQL implementation
-│   └── postgres/           # PostgreSQL implementation
+│   ├── postgres/           # PostgreSQL implementation
+│   └── mongodb/            # MongoDB implementation (schema inference)
 ├── detection/
 │   ├── detectors/          # PII detection by column name patterns
 │   └── detector-factory.ts
@@ -178,14 +179,14 @@ src/
     └── errors.ts           # Error hierarchy
 ```
 
-The database adapter interface (`DatabaseAdapter`) abstracts away database-specific operations. MySQL and PostgreSQL are supported, with the architecture designed for easy addition of new databases.
+The database adapter interface (`DatabaseAdapter`) abstracts away database-specific operations. MySQL, PostgreSQL, and MongoDB are supported. MongoDB uses schema inference via document sampling since it has no fixed schema.
 
 ## Development
 
 ```bash
 npm run typecheck    # TypeScript type checking
 npm run lint         # ESLint
-npm test             # Unit tests (241 tests)
+npm test             # Unit tests (270 tests)
 ```
 
 ### E2E Tests
@@ -193,8 +194,8 @@ npm test             # Unit tests (241 tests)
 E2E tests run against real database instances via Docker:
 
 ```bash
-docker compose up -d          # Start MySQL (3307/3308) and PostgreSQL (5433/5434)
-npm run test:e2e              # Run E2E tests
+docker compose up -d          # Start MySQL (3307/3308), PostgreSQL (5433/5434), MongoDB (27017/27018)
+npm run test:e2e              # Run E2E tests (MySQL + PostgreSQL + MongoDB)
 docker compose down           # Cleanup
 ```
 

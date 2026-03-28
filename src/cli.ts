@@ -26,6 +26,7 @@ import {
   ConfigValidationError,
 } from './shared/errors.js';
 import { logger, setLogLevel, getLogLevel } from './shared/logger.js';
+import type { DatabaseType } from './shared/types.js';
 
 const program = new Command();
 
@@ -49,7 +50,7 @@ program
   .requiredOption('--port <port>', 'Database port', parseInt)
   .requiredOption('--user <user>', 'Database user')
   .requiredOption('--password <password>', 'Database password')
-  .option('--type <type>', 'Database type', 'mysql')
+  .option('--type <type>', 'Database type (mysql, postgres, mongodb)', 'mysql')
   .option('--database <database>', 'Database name')
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
@@ -78,7 +79,7 @@ program
       );
 
       const adapter = createAdapter({
-        type: opts.type as 'mysql',
+        type: opts.type as DatabaseType,
         host: opts.host,
         port: opts.port,
         user: opts.user,
@@ -166,7 +167,7 @@ program
   .requiredOption('--port <port>', 'Source database port', parseInt)
   .requiredOption('--user <user>', 'Source database user')
   .requiredOption('--password <password>', 'Source database password')
-  .option('--type <type>', 'Database type', 'mysql')
+  .option('--type <type>', 'Database type (mysql, postgres, mongodb)', 'mysql')
   .option('--database <database>', 'Database name')
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
@@ -186,7 +187,7 @@ program
       output: string;
     }) => {
       const adapter = createAdapter({
-        type: opts.type as 'mysql',
+        type: opts.type as DatabaseType,
         host: opts.host,
         port: opts.port,
         user: opts.user,
@@ -205,7 +206,7 @@ program
 
         const config = generateConfig(scanResult, {
           source: {
-            type: opts.type as 'mysql',
+            type: opts.type as DatabaseType,
             host: opts.host,
             port: opts.port,
             user: opts.user,
@@ -213,7 +214,7 @@ program
             database: opts.database,
           },
           target: {
-            type: opts.type as 'mysql',
+            type: opts.type as DatabaseType,
             host: '<TARGET_HOST>',
             port: opts.port,
             user: '<TARGET_USER>',
