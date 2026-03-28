@@ -50,3 +50,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  mongo-source:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+    ports:
+      - '27017:27017'
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')", '-u', 'admin', '-p', 'rootpass']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo-target:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+    ports:
+      - '27018:27017'
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')", '-u', 'admin', '-p', 'rootpass']
+      interval: 5s
+      timeout: 5s
+      retries: 10

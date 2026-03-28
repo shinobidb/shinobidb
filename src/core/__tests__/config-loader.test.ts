@@ -115,7 +115,9 @@ describe('validateConfig', () => {
   it('should reject unsupported database type', () => {
     const cfg = clone(validConfig);
     (cfg.source as Record<string, unknown>).type = 'oracle';
-    expect(() => validateConfig(cfg)).toThrow('"source.type" must be one of: mysql, postgres');
+    expect(() => validateConfig(cfg)).toThrow(
+      '"source.type" must be one of: mysql, postgres, mongodb',
+    );
   });
 
   it('should accept empty tables array', () => {

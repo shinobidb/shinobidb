@@ -1,5 +1,6 @@
 import type { DatabaseConnectionConfig } from '../../shared/types.js';
 import { createAdapter } from '../factory.js';
+import { MongoDBAdapter } from '../mongodb/mongodb-adapter.js';
 import { MySQLAdapter } from '../mysql/mysql-adapter.js';
 import { PostgresAdapter } from '../postgres/postgres-adapter.js';
 
@@ -40,6 +41,19 @@ describe('createAdapter', () => {
 
     const adapter = createAdapter(config);
     expect(adapter).toBeInstanceOf(PostgresAdapter);
+  });
+
+  it('should create a MongoDBAdapter for mongodb type', () => {
+    const config: DatabaseConnectionConfig = {
+      type: 'mongodb',
+      host: 'localhost',
+      port: 27017,
+      user: 'admin',
+      password: 'test',
+    };
+
+    const adapter = createAdapter(config);
+    expect(adapter).toBeInstanceOf(MongoDBAdapter);
   });
 
   it('should throw for unsupported database type', () => {

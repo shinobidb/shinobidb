@@ -89,6 +89,32 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
+      mongo-source:
+        image: mongo:7
+        env:
+          MONGO_INITDB_ROOT_USERNAME: admin
+          MONGO_INITDB_ROOT_PASSWORD: rootpass
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd="mongosh --eval 'db.adminCommand({ping:1})' -u admin -p rootpass"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+      mongo-target:
+        image: mongo:7
+        env:
+          MONGO_INITDB_ROOT_USERNAME: admin
+          MONGO_INITDB_ROOT_PASSWORD: rootpass
+        ports:
+          - 27018:27017
+        options: >-
+          --health-cmd="mongosh --eval 'db.adminCommand({ping:1})' -u admin -p rootpass"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
     steps:
       - uses: actions/checkout@v4
 
