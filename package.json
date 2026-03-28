@@ -4,6 +4,9 @@
   "description": "CLI tool for masking production database data for staging environments",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "shinobidb": "dist/cli.js"
   },

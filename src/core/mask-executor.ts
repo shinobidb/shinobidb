@@ -24,13 +24,17 @@ export async function executeMask(
 
   logger.info(`Starting mask: ${config.tables.length} table(s) to process`);
 
+  const targetSchema = config.target.database;
+
   for (const tableConfig of config.tables) {
+    const targetSchemaName = targetSchema ?? tableConfig.schema;
+
     if (config.options.truncateTarget) {
-      logger.debug(`Truncating target: ${tableConfig.schema}.${tableConfig.table}`);
-      await target.truncateTable(tableConfig.schema, tableConfig.table);
+      logger.debug(`Truncating target: ${targetSchemaName}.${tableConfig.table}`);
+      await target.truncateTable(targetSchemaName, tableConfig.table);
     }
 
-    await processTable(source, target, tableConfig, config, registry, result);
+    await processTable(source, target, tableConfig, targetSchemaName, config, registry, result);
     result.tablesProcessed++;
   }
 
@@ -45,12 +49,15 @@ async function processTable(
   source: DatabaseAdapter,
   target: DatabaseAdapter,
   tableConfig: TableMaskConfig,
+  targetSchema: string,
   config: ShinobiConfig,
   registry: StrategyRegistry,
   result: MaskResult,
 ): Promise<void> {
   const { schema, table, columns } = tableConfig;
-  logger.info(`Processing ${schema}.${table} (${columns.length} column(s) to mask)`);
+  logger.info(
+    `Processing ${schema}.${table} → ${targetSchema}.${table} (${columns.length} column(s) to mask)`,
+  );
 
   await source.readRows(schema, table, config.options.batchSize, async (rows) => {
     const maskedRows = rows.map((row, rowIndex) =>
@@ -58,7 +65,7 @@ async function processTable(
     );
 
     if (maskedRows.length > 0) {
-      await target.writeRows(schema, table, maskedRows);
+      await target.writeRows(targetSchema, table, maskedRows);
       result.rowsWritten += maskedRows.length;
     }
 
