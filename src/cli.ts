@@ -11,6 +11,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
   version: string;
 };
 
+import { buildAuditRecord, writeAuditLog } from './core/audit-logger.js';
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig } from './core/config-loader.js';
 import { executeMask, executeDryRun } from './core/mask-executor.js';
@@ -245,6 +246,7 @@ program
   .option('--sync-schema', 'Auto-create missing tables in target from source schema')
   .option('--concurrency <n>', 'Number of tables to process in parallel', parseInt, 1)
   .option('--no-progress', 'Disable progress bar')
+  .option('--audit-log <file>', 'Write audit log to file (JSON or CSV based on extension)')
   .action(
     async (opts: {
       config: string;
@@ -256,6 +258,7 @@ program
       syncSchema?: boolean;
       concurrency: number;
       progress: boolean;
+      auditLog?: string;
     }) => {
       const config = await loadConfig(resolve(opts.config));
 
@@ -332,11 +335,13 @@ program
               }
             : undefined;
 
+          const startTime = Date.now();
           const result = await executeMask(source, target, config, registry, {
             syncSchema: opts.syncSchema,
             concurrency: opts.concurrency,
             onProgress,
           });
+          const durationMs = Date.now() - startTime;
 
           if (progressBar) {
             progressBar.stop();
@@ -345,6 +350,17 @@ program
           logger.output(
             `Masked ${result.rowsProcessed} row(s) across ${result.tablesProcessed} table(s)`,
           );
+
+          if (opts.auditLog) {
+            const record = buildAuditRecord({
+              config,
+              result,
+              durationMs,
+              syncSchema: opts.syncSchema,
+              concurrency: opts.concurrency,
+            });
+            await writeAuditLog(resolve(opts.auditLog), record);
+          }
         } finally {
           await Promise.all([source.destroy(), target.destroy()]);
         }

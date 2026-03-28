@@ -7,10 +7,20 @@ import type { MaskingContext } from '../masking/types.js';
 import { ShinobiError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 
+export interface TableResult {
+  schema: string;
+  table: string;
+  rowsProcessed: number;
+  rowsWritten: number;
+  copyOnly: boolean;
+  maskedColumns: string[];
+}
+
 export interface MaskResult {
   tablesProcessed: number;
   rowsProcessed: number;
   rowsWritten: number;
+  tableDetails: TableResult[];
 }
 
 export interface DryRunSampleRow {
@@ -58,6 +68,7 @@ export async function executeMask(
     tablesProcessed: 0,
     rowsProcessed: 0,
     rowsWritten: 0,
+    tableDetails: [],
   };
 
   const tableCount = config.tables.length;
@@ -120,15 +131,12 @@ export async function executeMask(
     const targetSchemaName = tableSchemaMap.get(`${tableConfig.schema}.${tableConfig.table}`)!;
 
     return limit(async () => {
-      const tableResult: MaskResult = {
-        tablesProcessed: 0,
-        rowsProcessed: 0,
-        rowsWritten: 0,
-      };
+      let tableRowsProcessed = 0;
+      let tableRowsWritten = 0;
 
       const onBatchDone = (rowCount: number) => {
-        tableResult.rowsProcessed += rowCount;
-        tableResult.rowsWritten += rowCount;
+        tableRowsProcessed += rowCount;
+        tableRowsWritten += rowCount;
         result.rowsProcessed += rowCount;
         result.rowsWritten += rowCount;
         emitProgress(`${tableConfig.schema}.${tableConfig.table}`);
@@ -148,6 +156,14 @@ export async function executeMask(
         );
       }
 
+      result.tableDetails.push({
+        schema: tableConfig.schema,
+        table: tableConfig.table,
+        rowsProcessed: tableRowsProcessed,
+        rowsWritten: tableRowsWritten,
+        copyOnly: !!tableConfig.copyOnly,
+        maskedColumns: tableConfig.copyOnly ? [] : tableConfig.columns.map((c) => c.name),
+      });
       result.tablesProcessed++;
       emitProgress(`${tableConfig.schema}.${tableConfig.table}`);
     });

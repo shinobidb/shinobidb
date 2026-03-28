@@ -88,6 +88,15 @@ describe('executeMask', () => {
     expect(result.tablesProcessed).toBe(1);
     expect(result.rowsProcessed).toBe(2);
     expect(result.rowsWritten).toBe(2);
+    expect(result.tableDetails).toHaveLength(1);
+    expect(result.tableDetails[0]).toEqual({
+      schema: 'test_db',
+      table: 'users',
+      rowsProcessed: 2,
+      rowsWritten: 2,
+      copyOnly: false,
+      maskedColumns: ['email', 'first_name'],
+    });
 
     expect(target.truncateTable).toHaveBeenCalledWith('test_db', 'users');
     expect(target.writeRows).toHaveBeenCalledTimes(1);
@@ -343,6 +352,14 @@ describe('executeMask', () => {
     expect(result.tablesProcessed).toBe(1);
     expect(result.rowsProcessed).toBe(2);
     expect(result.rowsWritten).toBe(2);
+    expect(result.tableDetails[0]).toEqual({
+      schema: 'test_db',
+      table: 'prefectures',
+      rowsProcessed: 2,
+      rowsWritten: 2,
+      copyOnly: true,
+      maskedColumns: [],
+    });
 
     const writtenRows = (target.writeRows as jest.Mock).mock.calls[0]![2] as Record<
       string,
