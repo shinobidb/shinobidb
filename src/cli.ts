@@ -13,7 +13,9 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig } from './core/config-loader.js';
 import { executeMask } from './core/mask-executor.js';
+import { diffScans } from './core/scan-diff.js';
 import { scan } from './core/scanner.js';
+import { saveSnapshot, loadSnapshot } from './core/snapshot.js';
 import { createAdapter } from './db/factory.js';
 import { createDefaultDetectors } from './detection/detector-factory.js';
 import { createDefaultRegistry } from './masking/strategy-registry.js';
@@ -52,6 +54,8 @@ program
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
   .option('--json', 'Output as JSON')
+  .option('--snapshot [file]', 'Save scan results to a snapshot file', false)
+  .option('--diff [file]', 'Compare with a previous snapshot', false)
   .action(
     async (opts: {
       host: string;
@@ -63,7 +67,16 @@ program
       schemas?: string;
       tables?: string;
       json?: boolean;
+      snapshot?: boolean | string;
+      diff?: boolean | string;
     }) => {
+      const snapshotPath = resolve(
+        typeof opts.snapshot === 'string' ? opts.snapshot : '.shinobidb/snapshot.json',
+      );
+      const diffPath = resolve(
+        typeof opts.diff === 'string' ? opts.diff : '.shinobidb/snapshot.json',
+      );
+
       const adapter = createAdapter({
         type: opts.type as 'mysql',
         host: opts.host,
@@ -95,6 +108,50 @@ program
               `  ${d.schema}.${d.table}.${d.column}  [${d.category}]  confidence: ${d.confidence}  strategy: ${d.suggestedMaskingStrategy}`,
             );
           }
+        }
+
+        if (opts.diff !== false) {
+          const baseline = await loadSnapshot(diffPath);
+          const diff = diffScans(baseline, result);
+
+          if (diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0) {
+            logger.success('\nNo schema changes detected.');
+          } else {
+            logger.output(`\n--- Schema diff (vs ${diffPath}) ---`);
+
+            if (diff.added.length > 0) {
+              logger.output(`\nNew PII columns (${diff.added.length}):`);
+              for (const d of diff.added) {
+                logger.output(
+                  `  + ${d.schema}.${d.table}.${d.column}  [${d.category}]  confidence: ${d.confidence}  strategy: ${d.suggestedMaskingStrategy}`,
+                );
+              }
+            }
+
+            if (diff.removed.length > 0) {
+              logger.output(`\nRemoved PII columns (${diff.removed.length}):`);
+              for (const d of diff.removed) {
+                logger.output(`  - ${d.schema}.${d.table}.${d.column}  [${d.category}]`);
+              }
+            }
+
+            if (diff.changed.length > 0) {
+              logger.output(`\nChanged PII columns (${diff.changed.length}):`);
+              for (const c of diff.changed) {
+                logger.output(
+                  `  ~ ${c.column.schema}.${c.column.table}.${c.column.column}  [${c.before.category} -> ${c.after.category}]  confidence: ${c.before.confidence} -> ${c.after.confidence}`,
+                );
+              }
+            }
+
+            logger.output(`\nUnchanged: ${diff.unchanged}`);
+            process.exitCode = 1;
+          }
+        }
+
+        if (opts.snapshot !== false) {
+          await saveSnapshot(snapshotPath, result);
+          logger.success(`Snapshot saved to ${snapshotPath}`);
         }
       } finally {
         await adapter.destroy();

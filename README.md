@@ -71,6 +71,27 @@ shinobidb mask \
 
 Passwords are passed via CLI flags (not stored in the config file).
 
+### Schema Change Detection
+
+Track PII column changes over time using snapshots:
+
+```bash
+# Save a baseline snapshot
+shinobidb scan --host localhost --port 3306 --user root --password secret --schemas mydb --snapshot
+
+# Later, compare current schema against the snapshot
+shinobidb scan --host localhost --port 3306 --user root --password secret --schemas mydb --diff
+
+# Custom snapshot file paths
+shinobidb scan ... --snapshot baseline.json
+shinobidb scan ... --diff baseline.json
+
+# Save and diff in one command
+shinobidb scan ... --snapshot --diff
+```
+
+The diff output shows new, removed, and changed PII columns. Exit code is 1 when changes are detected, making it easy to integrate into CI pipelines.
+
 ### Global Options
 
 - `-v, --verbose` — Enable debug logging with stack traces on errors
@@ -164,7 +185,7 @@ The database adapter interface (`DatabaseAdapter`) abstracts away database-speci
 ```bash
 npm run typecheck    # TypeScript type checking
 npm run lint         # ESLint
-npm test             # Unit tests (226 tests)
+npm test             # Unit tests (241 tests)
 ```
 
 ### E2E Tests
