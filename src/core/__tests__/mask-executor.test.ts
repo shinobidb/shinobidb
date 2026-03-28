@@ -210,6 +210,72 @@ describe('executeMask', () => {
     expect(written1).toEqual(written2);
   });
 
+  it('should use target.database as schema when source and target schemas differ', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    const target = createMockAdapter();
+    const config = makeConfig({
+      source: {
+        type: 'mysql',
+        host: 'localhost',
+        port: 3306,
+        user: 'root',
+        password: '',
+        database: 'source_db',
+      },
+      target: {
+        type: 'mysql',
+        host: 'localhost',
+        port: 3306,
+        user: 'root',
+        password: '',
+        database: 'target_db',
+      },
+      tables: [
+        {
+          schema: 'source_db',
+          table: 'users',
+          columns: [
+            { name: 'email', strategy: 'hash_email' },
+            { name: 'first_name', strategy: 'fake_first_name' },
+          ],
+        },
+      ],
+    });
+
+    await executeMask(source, target, config, registry);
+
+    // Source should read from source_db
+    expect(source.readRows).toHaveBeenCalledWith(
+      'source_db',
+      'users',
+      expect.any(Number),
+      expect.any(Function),
+    );
+
+    // Target should write to target_db, not source_db
+    expect(target.truncateTable).toHaveBeenCalledWith('target_db', 'users');
+    expect(target.writeRows).toHaveBeenCalledWith('target_db', 'users', expect.any(Array));
+  });
+
+  it('should fall back to source schema when target.database is not set', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    const target = createMockAdapter();
+    const config = makeConfig();
+    // config has no database set on target
+
+    await executeMask(source, target, config, registry);
+
+    // Should use the table's schema (test_db) for both source and target
+    expect(source.readRows).toHaveBeenCalledWith(
+      'test_db',
+      'users',
+      expect.any(Number),
+      expect.any(Function),
+    );
+    expect(target.truncateTable).toHaveBeenCalledWith('test_db', 'users');
+    expect(target.writeRows).toHaveBeenCalledWith('test_db', 'users', expect.any(Array));
+  });
+
   it('should skip columns not present in row', async () => {
     const source = createMockAdapter([
       [{ id: 1, email: 'test@example.com' }], // no first_name column

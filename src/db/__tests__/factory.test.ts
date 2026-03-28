@@ -1,6 +1,7 @@
 import type { DatabaseConnectionConfig } from '../../shared/types.js';
 import { createAdapter } from '../factory.js';
 import { MySQLAdapter } from '../mysql/mysql-adapter.js';
+import { PostgresAdapter } from '../postgres/postgres-adapter.js';
 
 // Mock logger
 jest.mock('../../shared/logger.js', () => ({
@@ -28,11 +29,24 @@ describe('createAdapter', () => {
     expect(adapter).toBeInstanceOf(MySQLAdapter);
   });
 
-  it('should throw for unsupported database type', () => {
-    const config = {
-      type: 'postgres' as DatabaseConnectionConfig['type'],
+  it('should create a PostgresAdapter for postgres type', () => {
+    const config: DatabaseConnectionConfig = {
+      type: 'postgres',
       host: 'localhost',
       port: 5432,
+      user: 'postgres',
+      password: 'test',
+    };
+
+    const adapter = createAdapter(config);
+    expect(adapter).toBeInstanceOf(PostgresAdapter);
+  });
+
+  it('should throw for unsupported database type', () => {
+    const config = {
+      type: 'oracle' as unknown as DatabaseConnectionConfig['type'],
+      host: 'localhost',
+      port: 1521,
       user: 'root',
       password: 'test',
     };
