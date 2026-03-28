@@ -12,9 +12,9 @@ jobs:
       matrix:
         node-version: [18, 20, 22]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -40,9 +40,9 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -53,6 +53,6 @@ jobs:
 
       - run: npm run build
 
-      - run: npm publish --provenance --access public
+      - run: npm publish --ignore-scripts --provenance --access public
         env:
           NODE_AUTH_TOKEN: ''
