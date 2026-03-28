@@ -80,6 +80,14 @@ const PATTERN_RULES: PatternRule[] = [
     confidence: 0.95,
     suggestedMaskingStrategy: 'redact',
   },
+  // Free text (may contain embedded PII)
+  {
+    pattern:
+      /^(?:note|notes|comment|comments|description|bio|biography|about|about[-_]?me|memo|remark|remarks|message|body|content|summary|feedback)$/i,
+    category: 'free_text',
+    confidence: 0.6,
+    suggestedMaskingStrategy: 'scrub_text',
+  },
 ];
 
 export class ColumnNameDetector implements PiiDetector {

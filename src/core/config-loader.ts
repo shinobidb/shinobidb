@@ -13,11 +13,15 @@ export async function loadConfig(filePath: string): Promise<ShinobiConfig> {
     throw new ConfigFileError(`Failed to read config file: ${filePath}`, err);
   }
 
+  return loadConfigFromString(content, filePath);
+}
+
+export function loadConfigFromString(content: string, source = '<string>'): ShinobiConfig {
   let raw: unknown;
   try {
     raw = parse(content);
   } catch (err) {
-    throw new ConfigFileError(`Failed to parse YAML: ${filePath}`, err);
+    throw new ConfigFileError(`Failed to parse YAML: ${source}`, err);
   }
 
   return validateConfig(raw);

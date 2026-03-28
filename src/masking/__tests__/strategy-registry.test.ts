@@ -54,6 +54,7 @@ describe('createDefaultRegistry', () => {
       'redact',
       'random_date',
       'hash_ip',
+      'scrub_text',
     ];
 
     for (const name of expectedStrategies) {
@@ -61,8 +62,8 @@ describe('createDefaultRegistry', () => {
     }
   });
 
-  it('should return 9 strategies', () => {
+  it('should return 10 strategies', () => {
     const registry = createDefaultRegistry();
-    expect(registry.getAll()).toHaveLength(9);
+    expect(registry.getAll()).toHaveLength(10);
   });
 });

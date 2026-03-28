@@ -9,6 +9,7 @@ import { HashEmailStrategy } from '../strategies/hash-email.js';
 import { HashIpStrategy } from '../strategies/hash-ip.js';
 import { RandomDateStrategy } from '../strategies/random-date.js';
 import { RedactStrategy } from '../strategies/redact.js';
+import { ScrubTextStrategy } from '../strategies/scrub-text.js';
 import type { MaskingContext } from '../types.js';
 
 const ctx: MaskingContext = {
@@ -176,6 +177,56 @@ describe('HashIpStrategy', () => {
 
   it('should pass through non-string values', () => {
     expect(strategy.mask(null, ctx)).toBeNull();
+    expect(strategy.mask('', ctx)).toBe('');
+  });
+});
+
+describe('ScrubTextStrategy', () => {
+  const strategy = new ScrubTextStrategy();
+
+  it('should replace email addresses in text', () => {
+    const result = strategy.mask('Contact john@example.com for details', ctx, 'seed') as string;
+    expect(result).not.toContain('john@example.com');
+    expect(result).toContain('@example.com');
+    expect(result).toContain('Contact ');
+  });
+
+  it('should replace IP addresses in text', () => {
+    const result = strategy.mask('Server at 192.168.1.100 failed', ctx, 'seed') as string;
+    expect(result).not.toContain('192.168.1.100');
+    expect(result).toContain('Server at ');
+    expect(result).toMatch(/\d+\.\d+\.\d+\.\d+/);
+  });
+
+  it('should replace phone numbers in text', () => {
+    const result = strategy.mask('Call me at +1-555-123-4567 today', ctx, 'seed') as string;
+    expect(result).not.toContain('+1-555-123-4567');
+    expect(result).toMatch(/\+1-\d{3}-\d{3}-\d{4}/);
+  });
+
+  it('should handle text with multiple PII types', () => {
+    const input = 'Email: user@test.com, IP: 10.0.0.1';
+    const result = strategy.mask(input, ctx, 'seed') as string;
+    expect(result).not.toContain('user@test.com');
+    expect(result).not.toContain('10.0.0.1');
+  });
+
+  it('should be deterministic with same seed', () => {
+    const input = 'Contact admin@corp.com for help';
+    const a = strategy.mask(input, ctx, 'seed');
+    const b = strategy.mask(input, ctx, 'seed');
+    expect(a).toBe(b);
+  });
+
+  it('should leave non-PII text unchanged', () => {
+    const input = 'This is a normal comment with no PII';
+    const result = strategy.mask(input, ctx, 'seed');
+    expect(result).toBe(input);
+  });
+
+  it('should pass through null/undefined/empty', () => {
+    expect(strategy.mask(null, ctx)).toBeNull();
+    expect(strategy.mask(undefined, ctx)).toBeUndefined();
     expect(strategy.mask('', ctx)).toBe('');
   });
 });

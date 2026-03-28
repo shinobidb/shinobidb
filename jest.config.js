@@ -4,6 +4,7 @@ export default {
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
+  testPathIgnorePatterns: ['/node_modules/', '/__tests__/e2e/'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     '^chalk$': '<rootDir>/src/__mocks__/chalk.ts',

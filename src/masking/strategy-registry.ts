@@ -11,6 +11,7 @@ import { HashEmailStrategy } from './strategies/hash-email.js';
 import { HashIpStrategy } from './strategies/hash-ip.js';
 import { RandomDateStrategy } from './strategies/random-date.js';
 import { RedactStrategy } from './strategies/redact.js';
+import { ScrubTextStrategy } from './strategies/scrub-text.js';
 import type { MaskingStrategy } from './types.js';
 
 export class StrategyRegistry {
@@ -49,6 +50,7 @@ export function createDefaultRegistry(): StrategyRegistry {
   registry.register(new RedactStrategy());
   registry.register(new RandomDateStrategy());
   registry.register(new HashIpStrategy());
+  registry.register(new ScrubTextStrategy());
 
   return registry;
 }

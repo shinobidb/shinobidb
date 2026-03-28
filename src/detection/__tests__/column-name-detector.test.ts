@@ -150,6 +150,18 @@ describe('ColumnNameDetector', () => {
     );
   });
 
+  describe('free_text detection', () => {
+    it.each(['notes', 'comment', 'comments', 'description', 'bio', 'memo', 'feedback'])(
+      'should detect "%s" as free_text',
+      async (columnName) => {
+        const results = await detector.detect([makeTable([{ name: columnName }])]);
+        expect(results).toHaveLength(1);
+        expect(results[0]!.category).toBe('free_text');
+        expect(results[0]!.suggestedMaskingStrategy).toBe('scrub_text');
+      },
+    );
+  });
+
   describe('non-PII columns', () => {
     it('should not detect non-PII columns', async () => {
       const tables = [
@@ -159,7 +171,7 @@ describe('ColumnNameDetector', () => {
           { name: 'updated_at' },
           { name: 'status' },
           { name: 'amount' },
-          { name: 'description' },
+          { name: 'quantity' },
         ]),
       ];
       const results = await detector.detect(tables);

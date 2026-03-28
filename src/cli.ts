@@ -12,7 +12,13 @@ import { scan } from './core/scanner.js';
 import { createAdapter } from './db/factory.js';
 import { createDefaultDetectors } from './detection/detector-factory.js';
 import { createDefaultRegistry } from './masking/strategy-registry.js';
-import { logger, setLogLevel } from './shared/logger.js';
+import {
+  ShinobiError,
+  DatabaseConnectionError,
+  ConfigFileError,
+  ConfigValidationError,
+} from './shared/errors.js';
+import { logger, setLogLevel, getLogLevel } from './shared/logger.js';
 
 const program = new Command();
 
@@ -197,6 +203,24 @@ program
   });
 
 program.parseAsync().catch((err: unknown) => {
-  logger.error(err instanceof Error ? err.message : String(err));
+  if (err instanceof DatabaseConnectionError) {
+    logger.error(`Connection failed: ${err.message}`);
+    logger.error('Hint: Check that the database is running and credentials are correct.');
+  } else if (err instanceof ConfigFileError) {
+    logger.error(`Config error: ${err.message}`);
+    logger.error('Hint: Run "shinobidb config" to generate a valid config file.');
+  } else if (err instanceof ConfigValidationError) {
+    logger.error(`Invalid config: ${err.message}`);
+    logger.error('Hint: Check the YAML structure matches the expected format.');
+  } else if (err instanceof ShinobiError) {
+    logger.error(`${err.code}: ${err.message}`);
+  } else {
+    logger.error(err instanceof Error ? err.message : String(err));
+  }
+
+  if (getLogLevel() === 'debug' && err instanceof Error && err.stack) {
+    logger.debug(err.stack);
+  }
+
   process.exitCode = 1;
 });
