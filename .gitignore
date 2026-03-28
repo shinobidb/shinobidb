@@ -1,0 +1,27 @@
+# Claude Code
+.claude/
+
+# Serena
+.serena/
+
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Test
+coverage/
+
+# TypeScript
+*.tsbuildinfo
