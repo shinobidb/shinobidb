@@ -62,6 +62,13 @@ function validateConnectionConfig(value: unknown, name: string): void {
     }
   }
 
+  const supportedTypes = ['mysql', 'postgres'];
+  if (!supportedTypes.includes(conn.type as string)) {
+    throw new ConfigValidationError(
+      `"${name}.type" must be one of: ${supportedTypes.join(', ')}. Got "${String(conn.type)}"`,
+    );
+  }
+
   if (typeof conn.port !== 'number') {
     throw new ConfigValidationError(`"${name}.port" must be a number`);
   }

@@ -104,6 +104,20 @@ describe('validateConfig', () => {
     expect(() => validateConfig(cfg)).toThrow('"tables[0].columns[0].strategy" must be a string');
   });
 
+  it('should accept postgres type', () => {
+    const cfg = clone(validConfig);
+    (cfg.source as Record<string, unknown>).type = 'postgres';
+    (cfg.target as Record<string, unknown>).type = 'postgres';
+    const result = validateConfig(cfg);
+    expect(result.source.type).toBe('postgres');
+  });
+
+  it('should reject unsupported database type', () => {
+    const cfg = clone(validConfig);
+    (cfg.source as Record<string, unknown>).type = 'oracle';
+    expect(() => validateConfig(cfg)).toThrow('"source.type" must be one of: mysql, postgres');
+  });
+
   it('should accept empty tables array', () => {
     const cfg = clone(validConfig);
     cfg.tables = [];

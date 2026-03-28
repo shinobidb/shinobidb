@@ -276,6 +276,45 @@ describe('executeMask', () => {
     expect(target.writeRows).toHaveBeenCalledWith('test_db', 'users', expect.any(Array));
   });
 
+  it('should use tableConfig.schema for postgres even when target.database is set', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    const target = createMockAdapter();
+    const config = makeConfig({
+      source: {
+        type: 'postgres',
+        host: 'localhost',
+        port: 5432,
+        user: 'postgres',
+        password: '',
+        database: 'source_db',
+      },
+      target: {
+        type: 'postgres',
+        host: 'localhost',
+        port: 5432,
+        user: 'postgres',
+        password: '',
+        database: 'target_db',
+      },
+      tables: [
+        {
+          schema: 'public',
+          table: 'users',
+          columns: [
+            { name: 'email', strategy: 'hash_email' },
+            { name: 'first_name', strategy: 'fake_first_name' },
+          ],
+        },
+      ],
+    });
+
+    await executeMask(source, target, config, registry);
+
+    // PostgreSQL: should use 'public' schema, NOT 'target_db' database name
+    expect(target.truncateTable).toHaveBeenCalledWith('public', 'users');
+    expect(target.writeRows).toHaveBeenCalledWith('public', 'users', expect.any(Array));
+  });
+
   it('should skip columns not present in row', async () => {
     const source = createMockAdapter([
       [{ id: 1, email: 'test@example.com' }], // no first_name column
