@@ -10,6 +10,7 @@ export interface TableMaskConfig {
   schema: string;
   table: string;
   columns: ColumnMaskConfig[];
+  copyOnly?: boolean;
 }
 
 export interface MaskOptions {

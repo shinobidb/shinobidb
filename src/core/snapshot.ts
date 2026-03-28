@@ -20,5 +20,6 @@ export async function loadSnapshot(filePath: string): Promise<ScanResult> {
     detections: data.detections,
     tablesScanned: data.tablesScanned,
     columnsScanned: data.columnsScanned,
+    scannedTables: data.scannedTables ?? [],
   };
 }

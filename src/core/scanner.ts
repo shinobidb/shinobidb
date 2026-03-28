@@ -7,10 +7,16 @@ export interface ScanOptions {
   tables?: string[];
 }
 
+export interface ScannedTable {
+  schema: string;
+  table: string;
+}
+
 export interface ScanResult {
   detections: PiiDetectionResult[];
   tablesScanned: number;
   columnsScanned: number;
+  scannedTables: ScannedTable[];
 }
 
 export async function scan(
@@ -68,5 +74,6 @@ export async function scan(
     detections: allDetections,
     tablesScanned: allTables.length,
     columnsScanned: totalColumns,
+    scannedTables: allTables.map((t) => ({ schema: t.schema, table: t.name })),
   };
 }

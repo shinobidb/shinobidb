@@ -4,6 +4,7 @@ import { parse } from 'yaml';
 
 import type { ShinobiConfig } from '../config/types.js';
 import { ConfigFileError, ConfigValidationError } from '../shared/errors.js';
+import { parseUri } from '../shared/uri-parser.js';
 
 export async function loadConfig(filePath: string): Promise<ShinobiConfig> {
   let content: string;
@@ -54,6 +55,34 @@ function validateConnectionConfig(value: unknown, name: string): void {
   }
 
   const conn = value as Record<string, unknown>;
+
+  if (typeof conn.uri === 'string') {
+    // URI mode: resolve uri into individual fields
+    const hasIndividualFields =
+      conn.host !== undefined || conn.port !== undefined || conn.user !== undefined;
+    if (hasIndividualFields) {
+      throw new ConfigValidationError(
+        `"${name}" has both "uri" and individual connection fields (host/port/user). These are mutually exclusive`,
+      );
+    }
+
+    const parsed = parseUri(conn.uri);
+    conn.type = parsed.type;
+    conn.host = parsed.host;
+    conn.port = parsed.port;
+    conn.user = parsed.user;
+    if (parsed.password) {
+      conn.password = parsed.password;
+    }
+    if (!conn.password) {
+      conn.password = '';
+    }
+    if (parsed.database) {
+      conn.database = parsed.database;
+    }
+    return;
+  }
+
   const requiredStrings = ['type', 'host', 'user', 'password'] as const;
 
   for (const field of requiredStrings) {
@@ -109,6 +138,19 @@ function validateTables(value: unknown): void {
     if (typeof table.table !== 'string') {
       throw new ConfigValidationError(`"tables[${i}].table" must be a string`);
     }
+    if (table.copyOnly !== undefined && typeof table.copyOnly !== 'boolean') {
+      throw new ConfigValidationError(`"tables[${i}].copyOnly" must be a boolean`);
+    }
+
+    if (table.copyOnly === true) {
+      if (table.columns !== undefined && Array.isArray(table.columns) && table.columns.length > 0) {
+        throw new ConfigValidationError(
+          `"tables[${i}]" has copyOnly: true but also defines columns. These are mutually exclusive`,
+        );
+      }
+      continue;
+    }
+
     if (!Array.isArray(table.columns)) {
       throw new ConfigValidationError(`"tables[${i}].columns" must be an array`);
     }

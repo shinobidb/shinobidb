@@ -205,6 +205,43 @@ export class MySQLAdapter implements DatabaseAdapter {
     }
   }
 
+  async tableExists(schema: string, table: string): Promise<boolean> {
+    const pool = this.getPool();
+    try {
+      const [rows] = await pool.query<mysql.RowDataPacket[]>(
+        'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1',
+        [schema, table],
+      );
+      return rows.length > 0;
+    } catch (error) {
+      throw new DatabaseQueryError(`Failed to check table existence: ${schema}.${table}`, error);
+    }
+  }
+
+  async createTable(schema: string, table: string, columns: ColumnInfo[]): Promise<void> {
+    const pool = this.getPool();
+    const identifier = `\`${schema}\`.\`${table}\``;
+
+    try {
+      const columnDefs = columns.map((col) => {
+        const parts = [`\`${col.name}\``, col.dataType];
+        if (!col.nullable) parts.push('NOT NULL');
+        if (col.defaultValue !== null) parts.push(`DEFAULT ${col.defaultValue}`);
+        return parts.join(' ');
+      });
+
+      const primaryKeys = columns.filter((c) => c.isPrimaryKey).map((c) => `\`${c.name}\``);
+      if (primaryKeys.length > 0) {
+        columnDefs.push(`PRIMARY KEY (${primaryKeys.join(', ')})`);
+      }
+
+      await pool.query(`CREATE TABLE ${identifier} (${columnDefs.join(', ')})`);
+      logger.debug(`Created table ${schema}.${table}`);
+    } catch (error) {
+      throw new DatabaseQueryError(`Failed to create table ${schema}.${table}`, error);
+    }
+  }
+
   async destroy(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

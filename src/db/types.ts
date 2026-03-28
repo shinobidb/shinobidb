@@ -47,5 +47,9 @@ export interface DatabaseAdapter {
 
   truncateTable(schema: string, table: string): Promise<void>;
 
+  tableExists(schema: string, table: string): Promise<boolean>;
+
+  createTable(schema: string, table: string, columns: ColumnInfo[]): Promise<void>;
+
   destroy(): Promise<void>;
 }

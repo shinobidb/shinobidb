@@ -12,7 +12,8 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig } from './core/config-loader.js';
-import { executeMask } from './core/mask-executor.js';
+import { executeMask, executeDryRun } from './core/mask-executor.js';
+import type { DryRunResult } from './core/mask-executor.js';
 import { diffScans } from './core/scan-diff.js';
 import { scan } from './core/scanner.js';
 import { saveSnapshot, loadSnapshot } from './core/snapshot.js';
@@ -26,7 +27,8 @@ import {
   ConfigValidationError,
 } from './shared/errors.js';
 import { logger, setLogLevel, getLogLevel } from './shared/logger.js';
-import type { DatabaseType } from './shared/types.js';
+import type { DatabaseConnectionConfig, DatabaseType } from './shared/types.js';
+import { parseUri } from './shared/uri-parser.js';
 
 const program = new Command();
 
@@ -46,10 +48,11 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
 program
   .command('scan')
   .description('Scan database for PII columns')
-  .requiredOption('--host <host>', 'Database host')
-  .requiredOption('--port <port>', 'Database port', parseInt)
-  .requiredOption('--user <user>', 'Database user')
-  .requiredOption('--password <password>', 'Database password')
+  .option('--uri <uri>', 'Connection URI (e.g. mysql://user:pass@host:3306/db)')
+  .option('--host <host>', 'Database host')
+  .option('--port <port>', 'Database port', parseInt)
+  .option('--user <user>', 'Database user')
+  .option('--password <password>', 'Database password')
   .option('--type <type>', 'Database type (mysql, postgres, mongodb)', 'mysql')
   .option('--database <database>', 'Database name')
   .option('--schemas <schemas>', 'Comma-separated schema names')
@@ -59,10 +62,11 @@ program
   .option('--diff [file]', 'Compare with a previous snapshot', false)
   .action(
     async (opts: {
-      host: string;
-      port: number;
-      user: string;
-      password: string;
+      uri?: string;
+      host?: string;
+      port?: number;
+      user?: string;
+      password?: string;
       type: string;
       database?: string;
       schemas?: string;
@@ -78,14 +82,8 @@ program
         typeof opts.diff === 'string' ? opts.diff : '.shinobidb/snapshot.json',
       );
 
-      const adapter = createAdapter({
-        type: opts.type as DatabaseType,
-        host: opts.host,
-        port: opts.port,
-        user: opts.user,
-        password: opts.password,
-        database: opts.database,
-      });
+      const connConfig = resolveConnectionOpts(opts);
+      const adapter = createAdapter(connConfig);
 
       try {
         await adapter.connect();
@@ -163,37 +161,35 @@ program
 program
   .command('config')
   .description('Generate masking config YAML from scan results')
-  .requiredOption('--host <host>', 'Source database host')
-  .requiredOption('--port <port>', 'Source database port', parseInt)
-  .requiredOption('--user <user>', 'Source database user')
-  .requiredOption('--password <password>', 'Source database password')
+  .option('--uri <uri>', 'Connection URI (e.g. mysql://user:pass@host:3306/db)')
+  .option('--host <host>', 'Source database host')
+  .option('--port <port>', 'Source database port', parseInt)
+  .option('--user <user>', 'Source database user')
+  .option('--password <password>', 'Source database password')
   .option('--type <type>', 'Database type (mysql, postgres, mongodb)', 'mysql')
   .option('--database <database>', 'Database name')
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
   .option('--min-confidence <value>', 'Minimum confidence threshold', parseFloat)
+  .option('--include-all-tables', 'Include tables without PII detections as copyOnly')
   .option('-o, --output <file>', 'Output file path', 'shinobidb.yaml')
   .action(
     async (opts: {
-      host: string;
-      port: number;
-      user: string;
-      password: string;
+      uri?: string;
+      host?: string;
+      port?: number;
+      user?: string;
+      password?: string;
       type: string;
       database?: string;
       schemas?: string;
       tables?: string;
       minConfidence?: number;
+      includeAllTables?: boolean;
       output: string;
     }) => {
-      const adapter = createAdapter({
-        type: opts.type as DatabaseType,
-        host: opts.host,
-        port: opts.port,
-        user: opts.user,
-        password: opts.password,
-        database: opts.database,
-      });
+      const connConfig = resolveConnectionOpts(opts);
+      const adapter = createAdapter(connConfig);
 
       try {
         await adapter.connect();
@@ -206,22 +202,23 @@ program
 
         const config = generateConfig(scanResult, {
           source: {
-            type: opts.type as DatabaseType,
-            host: opts.host,
-            port: opts.port,
-            user: opts.user,
+            type: connConfig.type,
+            host: connConfig.host,
+            port: connConfig.port,
+            user: connConfig.user,
             password: '<SOURCE_PASSWORD>',
-            database: opts.database,
+            database: connConfig.database,
           },
           target: {
-            type: opts.type as DatabaseType,
+            type: connConfig.type,
             host: '<TARGET_HOST>',
-            port: opts.port,
+            port: connConfig.port,
             user: '<TARGET_USER>',
             password: '<TARGET_PASSWORD>',
-            database: opts.database,
+            database: connConfig.database,
           },
           minConfidence: opts.minConfidence,
+          includeAllTables: opts.includeAllTables,
         });
 
         const yaml = configToYaml(config);
@@ -239,31 +236,161 @@ program
   .command('mask')
   .description('Execute data masking based on config file')
   .option('-c, --config <file>', 'Config file path', 'shinobidb.yaml')
-  .requiredOption('--source-password <password>', 'Source database password')
-  .requiredOption('--target-password <password>', 'Target database password')
-  .action(async (opts: { config: string; sourcePassword: string; targetPassword: string }) => {
-    const config = await loadConfig(resolve(opts.config));
+  .option('--source-password <password>', 'Source database password')
+  .option('--target-password <password>', 'Target database password')
+  .option('--dry-run', 'Preview masking results without writing to target')
+  .option('--sample-rows <n>', 'Number of sample rows for dry-run (0 for all)', parseInt)
+  .option('--json', 'Output dry-run results as JSON')
+  .option('--sync-schema', 'Auto-create missing tables in target from source schema')
+  .action(
+    async (opts: {
+      config: string;
+      sourcePassword?: string;
+      targetPassword?: string;
+      dryRun?: boolean;
+      sampleRows?: number;
+      json?: boolean;
+      syncSchema?: boolean;
+    }) => {
+      const config = await loadConfig(resolve(opts.config));
 
-    config.source.password = opts.sourcePassword;
-    config.target.password = opts.targetPassword;
+      if (opts.dryRun) {
+        if (!opts.sourcePassword) {
+          throw new ConfigValidationError(
+            '--source-password is required. Use --source-password <password>',
+          );
+        }
+        config.source.password = opts.sourcePassword;
 
-    const source = createAdapter(config.source);
-    const target = createAdapter(config.target);
-    const registry = createDefaultRegistry();
+        const source = createAdapter(config.source);
+        const registry = createDefaultRegistry();
 
-    try {
-      await source.connect();
-      await target.connect();
+        try {
+          await source.connect();
+          const dryRunResult = await executeDryRun(source, config, registry, opts.sampleRows ?? 3);
 
-      const result = await executeMask(source, target, config, registry);
+          if (opts.json) {
+            logger.output(JSON.stringify(dryRunResult, null, 2));
+          } else {
+            formatDryRunOutput(dryRunResult);
+          }
+        } finally {
+          await source.destroy();
+        }
+      } else {
+        if (!opts.sourcePassword) {
+          throw new ConfigValidationError(
+            '--source-password is required. Use --source-password <password>',
+          );
+        }
+        if (!opts.targetPassword) {
+          throw new ConfigValidationError(
+            '--target-password is required. Use --target-password <password>',
+          );
+        }
+        config.source.password = opts.sourcePassword;
+        config.target.password = opts.targetPassword;
 
-      logger.output(
-        `Masked ${result.rowsProcessed} row(s) across ${result.tablesProcessed} table(s)`,
-      );
-    } finally {
-      await Promise.all([source.destroy(), target.destroy()]);
+        const source = createAdapter(config.source);
+        const target = createAdapter(config.target);
+        const registry = createDefaultRegistry();
+
+        try {
+          await source.connect();
+          await target.connect();
+
+          const result = await executeMask(source, target, config, registry, {
+            syncSchema: opts.syncSchema,
+          });
+
+          logger.output(
+            `Masked ${result.rowsProcessed} row(s) across ${result.tablesProcessed} table(s)`,
+          );
+        } finally {
+          await Promise.all([source.destroy(), target.destroy()]);
+        }
+      }
+    },
+  );
+
+function resolveConnectionOpts(opts: {
+  uri?: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  type?: string;
+  database?: string;
+}): DatabaseConnectionConfig {
+  if (opts.uri) {
+    const hasIndividual =
+      opts.host !== undefined || opts.port !== undefined || opts.user !== undefined;
+    if (hasIndividual) {
+      throw new ConfigValidationError('--uri and --host/--port/--user are mutually exclusive');
     }
-  });
+    const parsed = parseUri(opts.uri);
+    if (opts.password) {
+      if (parsed.password) {
+        throw new ConfigValidationError(
+          'Password specified both in URI and via --password. These are mutually exclusive',
+        );
+      }
+      parsed.password = opts.password;
+    }
+    if (opts.database) {
+      parsed.database = opts.database;
+    }
+    return parsed;
+  }
+
+  if (!opts.host || !opts.user || opts.port === undefined) {
+    throw new ConfigValidationError('Either --uri or --host/--port/--user/--password is required');
+  }
+
+  return {
+    type: (opts.type ?? 'mysql') as DatabaseType,
+    host: opts.host,
+    port: opts.port,
+    user: opts.user,
+    password: opts.password ?? '',
+    database: opts.database,
+  };
+}
+
+function formatDryRunOutput(result: DryRunResult): void {
+  logger.output(
+    `\nDry Run Preview — ${result.tables.length} table(s), ${result.totalRows} total row(s)\n`,
+  );
+
+  for (const table of result.tables) {
+    if (table.copyOnly) {
+      logger.output(`📋 ${table.schema}.${table.table} — copy only (${table.rowCount} row(s))`);
+      continue;
+    }
+
+    logger.output(`🔒 ${table.schema}.${table.table} — ${table.rowCount} row(s)`);
+
+    if (table.samples.length === 0) {
+      logger.output('   (no rows to preview)\n');
+      continue;
+    }
+
+    const columns = Object.keys(table.samples[0]!.before);
+
+    for (let i = 0; i < table.samples.length; i++) {
+      const sample = table.samples[i]!;
+      logger.output(`   Row ${i + 1}:`);
+      for (const col of columns) {
+        const before = String(sample.before[col] ?? 'null');
+        const after = String(sample.after[col] ?? 'null');
+        if (before !== after) {
+          logger.output(`     ${col}: ${before} → ${after}`);
+        }
+      }
+    }
+    logger.output('');
+  }
+}
 
 program.parseAsync().catch((err: unknown) => {
   if (err instanceof DatabaseConnectionError) {

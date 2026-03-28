@@ -1,7 +1,7 @@
 import type { ShinobiConfig } from '../../config/types.js';
 import type { DatabaseAdapter } from '../../db/types.js';
 import { createDefaultRegistry } from '../../masking/strategy-registry.js';
-import { executeMask } from '../mask-executor.js';
+import { executeMask, executeDryRun } from '../mask-executor.js';
 
 function createMockAdapter(rows: Record<string, unknown>[][] = []): DatabaseAdapter {
   return {
@@ -25,6 +25,8 @@ function createMockAdapter(rows: Record<string, unknown>[][] = []): DatabaseAdap
     ),
     writeRows: jest.fn(),
     truncateTable: jest.fn(),
+    tableExists: jest.fn().mockResolvedValue(true),
+    createTable: jest.fn(),
     destroy: jest.fn(),
   };
 }
@@ -315,6 +317,98 @@ describe('executeMask', () => {
     expect(target.writeRows).toHaveBeenCalledWith('public', 'users', expect.any(Array));
   });
 
+  it('should copy rows without masking for copyOnly tables', async () => {
+    const sourceRows = [
+      [
+        { id: 1, name: 'Tokyo', code: 13 },
+        { id: 2, name: 'Osaka', code: 27 },
+      ],
+    ];
+
+    const source = createMockAdapter(sourceRows);
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'prefectures',
+          columns: [],
+          copyOnly: true,
+        },
+      ],
+    });
+
+    const result = await executeMask(source, target, config, registry);
+
+    expect(result.tablesProcessed).toBe(1);
+    expect(result.rowsProcessed).toBe(2);
+    expect(result.rowsWritten).toBe(2);
+
+    const writtenRows = (target.writeRows as jest.Mock).mock.calls[0]![2] as Record<
+      string,
+      unknown
+    >[];
+    // Data should be copied as-is, no masking
+    expect(writtenRows[0]).toEqual({ id: 1, name: 'Tokyo', code: 13 });
+    expect(writtenRows[1]).toEqual({ id: 2, name: 'Osaka', code: 27 });
+  });
+
+  it('should handle mix of copyOnly and masked tables', async () => {
+    let callCount = 0;
+    const source = createMockAdapter();
+    (source.readRows as jest.Mock).mockImplementation(
+      async (
+        _s: string,
+        _t: string,
+        _b: number,
+        onBatch: (rows: Record<string, unknown>[]) => Promise<void>,
+      ) => {
+        if (callCount === 0) {
+          await onBatch([{ id: 1, email: 'alice@example.com', first_name: 'Alice' }]);
+        } else {
+          await onBatch([{ id: 1, name: 'Tokyo', code: 13 }]);
+        }
+        callCount++;
+      },
+    );
+
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+        },
+        {
+          schema: 'test_db',
+          table: 'prefectures',
+          columns: [],
+          copyOnly: true,
+        },
+      ],
+    });
+
+    const result = await executeMask(source, target, config, registry);
+
+    expect(result.tablesProcessed).toBe(2);
+    expect(result.rowsWritten).toBe(2);
+
+    // First table: masked
+    const maskedRows = (target.writeRows as jest.Mock).mock.calls[0]![2] as Record<
+      string,
+      unknown
+    >[];
+    expect(maskedRows[0]!.email).not.toBe('alice@example.com');
+
+    // Second table: copied as-is
+    const copiedRows = (target.writeRows as jest.Mock).mock.calls[1]![2] as Record<
+      string,
+      unknown
+    >[];
+    expect(copiedRows[0]).toEqual({ id: 1, name: 'Tokyo', code: 13 });
+  });
+
   it('should skip columns not present in row', async () => {
     const source = createMockAdapter([
       [{ id: 1, email: 'test@example.com' }], // no first_name column
@@ -331,5 +425,229 @@ describe('executeMask', () => {
     >[];
     expect(writtenRows[0]!.email).not.toBe('test@example.com');
     expect(writtenRows[0]!.first_name).toBeUndefined();
+  });
+});
+
+describe('executeDryRun', () => {
+  const registry = createDefaultRegistry();
+
+  function createDryRunAdapter(rows: Record<string, unknown>[][], rowCount = 100): DatabaseAdapter {
+    return {
+      connect: jest.fn(),
+      getSchemas: jest.fn(),
+      getTables: jest.fn(),
+      getColumns: jest.fn(),
+      getRowCount: jest.fn().mockResolvedValue(rowCount),
+      getForeignKeys: jest.fn(),
+      readRows: jest.fn(
+        async (
+          _schema: string,
+          _table: string,
+          _batchSize: number,
+          onBatch: (rows: Record<string, unknown>[]) => Promise<boolean | void>,
+        ) => {
+          for (const batch of rows) {
+            await onBatch(batch);
+          }
+        },
+      ),
+      writeRows: jest.fn(),
+      truncateTable: jest.fn(),
+      tableExists: jest.fn().mockResolvedValue(true),
+      createTable: jest.fn(),
+      destroy: jest.fn(),
+    };
+  }
+
+  it('should return before/after samples without writing', async () => {
+    const source = createDryRunAdapter([
+      [
+        { id: 1, email: 'alice@example.com', first_name: 'Alice' },
+        { id: 2, email: 'bob@example.com', first_name: 'Bob' },
+      ],
+    ]);
+    const config = makeConfig();
+
+    const result = await executeDryRun(source, config, registry, 3);
+
+    expect(result.tables).toHaveLength(1);
+    expect(result.tables[0]!.schema).toBe('test_db');
+    expect(result.tables[0]!.table).toBe('users');
+    expect(result.tables[0]!.copyOnly).toBe(false);
+    expect(result.tables[0]!.samples).toHaveLength(2);
+
+    // before should have original values
+    expect(result.tables[0]!.samples[0]!.before.email).toBe('alice@example.com');
+    // after should have masked values
+    expect(result.tables[0]!.samples[0]!.after.email).not.toBe('alice@example.com');
+
+    // No writes should have happened
+    expect(source.writeRows).not.toHaveBeenCalled();
+  });
+
+  it('should limit samples to sampleRows', async () => {
+    const source = createDryRunAdapter([
+      [
+        { id: 1, email: 'a@test.com', first_name: 'A' },
+        { id: 2, email: 'b@test.com', first_name: 'B' },
+        { id: 3, email: 'c@test.com', first_name: 'C' },
+        { id: 4, email: 'd@test.com', first_name: 'D' },
+        { id: 5, email: 'e@test.com', first_name: 'E' },
+      ],
+    ]);
+    const config = makeConfig();
+
+    const result = await executeDryRun(source, config, registry, 2);
+
+    expect(result.tables[0]!.samples).toHaveLength(2);
+  });
+
+  it('should collect all samples when sampleRows is 0', async () => {
+    const source = createDryRunAdapter([
+      [
+        { id: 1, email: 'a@test.com', first_name: 'A' },
+        { id: 2, email: 'b@test.com', first_name: 'B' },
+        { id: 3, email: 'c@test.com', first_name: 'C' },
+      ],
+    ]);
+    const config = makeConfig();
+
+    const result = await executeDryRun(source, config, registry, 0);
+
+    expect(result.tables[0]!.samples).toHaveLength(3);
+  });
+
+  it('should show copyOnly tables without samples', async () => {
+    const source = createDryRunAdapter([], 50);
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'prefectures',
+          columns: [],
+          copyOnly: true,
+        },
+      ],
+    });
+
+    const result = await executeDryRun(source, config, registry);
+
+    expect(result.tables).toHaveLength(1);
+    expect(result.tables[0]!.copyOnly).toBe(true);
+    expect(result.tables[0]!.rowCount).toBe(50);
+    expect(result.tables[0]!.samples).toHaveLength(0);
+  });
+
+  it('should report totalRows across all tables', async () => {
+    let callCount = 0;
+    const source = createDryRunAdapter([]);
+    (source.getRowCount as jest.Mock).mockImplementation(() => {
+      callCount++;
+      return Promise.resolve(callCount === 1 ? 100 : 50);
+    });
+    (source.readRows as jest.Mock).mockImplementation(
+      async (
+        _s: string,
+        _t: string,
+        _b: number,
+        onBatch: (rows: Record<string, unknown>[]) => Promise<void>,
+      ) => {
+        await onBatch([{ id: 1, email: 'a@test.com', first_name: 'A' }]);
+      },
+    );
+
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+        },
+        {
+          schema: 'test_db',
+          table: 'prefectures',
+          columns: [],
+          copyOnly: true,
+        },
+      ],
+    });
+
+    const result = await executeDryRun(source, config, registry);
+
+    expect(result.totalRows).toBe(150);
+    expect(result.tables).toHaveLength(2);
+  });
+});
+
+describe('executeMask syncSchema', () => {
+  const registry = createDefaultRegistry();
+
+  it('should throw when target table does not exist and syncSchema is false', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    const target = createMockAdapter();
+    (target.tableExists as jest.Mock).mockResolvedValue(false);
+
+    const config = makeConfig();
+
+    await expect(executeMask(source, target, config, registry)).rejects.toThrow('TABLE_NOT_FOUND');
+  });
+
+  it('should auto-create table when syncSchema is true and table does not exist', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    (source.getColumns as jest.Mock).mockResolvedValue([
+      {
+        name: 'id',
+        dataType: 'int',
+        nullable: false,
+        isPrimaryKey: true,
+        isForeignKey: false,
+        defaultValue: null,
+        comment: null,
+      },
+      {
+        name: 'email',
+        dataType: 'varchar',
+        nullable: true,
+        isPrimaryKey: false,
+        isForeignKey: false,
+        defaultValue: null,
+        comment: null,
+      },
+    ]);
+    const target = createMockAdapter();
+    (target.tableExists as jest.Mock).mockResolvedValue(false);
+
+    const config = makeConfig();
+
+    const result = await executeMask(source, target, config, registry, { syncSchema: true });
+
+    expect(target.createTable).toHaveBeenCalledWith('test_db', 'users', expect.any(Array));
+    expect(result.tablesProcessed).toBe(1);
+    expect(result.rowsWritten).toBe(1);
+  });
+
+  it('should not truncate newly created tables', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    const target = createMockAdapter();
+    (target.tableExists as jest.Mock).mockResolvedValue(false);
+
+    const config = makeConfig();
+
+    await executeMask(source, target, config, registry, { syncSchema: true });
+
+    expect(target.truncateTable).not.toHaveBeenCalled();
+  });
+
+  it('should still truncate existing tables', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'test@example.com', first_name: 'Test' }]]);
+    const target = createMockAdapter();
+    (target.tableExists as jest.Mock).mockResolvedValue(true);
+
+    const config = makeConfig();
+
+    await executeMask(source, target, config, registry, { syncSchema: true });
+
+    expect(target.truncateTable).toHaveBeenCalledWith('test_db', 'users');
+    expect(target.createTable).not.toHaveBeenCalled();
   });
 });

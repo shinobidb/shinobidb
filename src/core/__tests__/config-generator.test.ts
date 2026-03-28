@@ -15,11 +15,15 @@ function makeDetection(overrides: Partial<PiiDetectionResult> = {}): PiiDetectio
   };
 }
 
-function makeScanResult(detections: PiiDetectionResult[]): ScanResult {
+function makeScanResult(
+  detections: PiiDetectionResult[],
+  scannedTables: ScanResult['scannedTables'] = [],
+): ScanResult {
   return {
     detections,
     tablesScanned: 1,
     columnsScanned: 10,
+    scannedTables,
   };
 }
 
@@ -155,6 +159,45 @@ describe('generateConfig', () => {
     const config = generateConfig(scanResult);
 
     expect(config.tables).toHaveLength(0);
+  });
+
+  it('should include all scanned tables as copyOnly when includeAllTables is true', () => {
+    const scanResult = makeScanResult(
+      [makeDetection({ schema: 'db', table: 'users', column: 'email' })],
+      [
+        { schema: 'db', table: 'users' },
+        { schema: 'db', table: 'prefectures' },
+        { schema: 'db', table: 'settings' },
+      ],
+    );
+
+    const config = generateConfig(scanResult, { includeAllTables: true });
+
+    expect(config.tables).toHaveLength(3);
+    // users has PII detection, not copyOnly
+    expect(config.tables[0]!.table).toBe('users');
+    expect(config.tables[0]!.copyOnly).toBeUndefined();
+    // others are copyOnly
+    expect(config.tables[1]!.table).toBe('prefectures');
+    expect(config.tables[1]!.copyOnly).toBe(true);
+    expect(config.tables[1]!.columns).toEqual([]);
+    expect(config.tables[2]!.table).toBe('settings');
+    expect(config.tables[2]!.copyOnly).toBe(true);
+  });
+
+  it('should not include copyOnly tables when includeAllTables is false', () => {
+    const scanResult = makeScanResult(
+      [makeDetection({ schema: 'db', table: 'users', column: 'email' })],
+      [
+        { schema: 'db', table: 'users' },
+        { schema: 'db', table: 'prefectures' },
+      ],
+    );
+
+    const config = generateConfig(scanResult);
+
+    expect(config.tables).toHaveLength(1);
+    expect(config.tables[0]!.table).toBe('users');
   });
 });
 

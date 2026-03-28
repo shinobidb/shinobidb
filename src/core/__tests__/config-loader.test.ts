@@ -126,4 +126,62 @@ describe('validateConfig', () => {
     const result = validateConfig(cfg);
     expect(result.tables).toHaveLength(0);
   });
+
+  it('should accept copyOnly table without columns', () => {
+    const cfg = clone(validConfig) as Record<string, unknown>;
+    cfg.tables = [{ schema: 'db', table: 'prefectures', copyOnly: true }];
+    const result = validateConfig(cfg);
+    expect(result.tables[0]!.copyOnly).toBe(true);
+  });
+
+  it('should accept copyOnly table with empty columns array', () => {
+    const cfg = clone(validConfig) as Record<string, unknown>;
+    cfg.tables = [{ schema: 'db', table: 'prefectures', copyOnly: true, columns: [] }];
+    const result = validateConfig(cfg);
+    expect(result.tables[0]!.copyOnly).toBe(true);
+  });
+
+  it('should reject copyOnly table with non-empty columns', () => {
+    const cfg = clone(validConfig) as Record<string, unknown>;
+    cfg.tables = [
+      {
+        schema: 'db',
+        table: 'users',
+        copyOnly: true,
+        columns: [{ name: 'email', strategy: 'hash_email' }],
+      },
+    ];
+    expect(() => validateConfig(cfg)).toThrow('copyOnly: true but also defines columns');
+  });
+
+  it('should accept URI in connection config', () => {
+    const cfg = clone(validConfig) as Record<string, unknown>;
+    cfg.source = { uri: 'mysql://root:pass@localhost:3306/mydb' };
+    const result = validateConfig(cfg);
+    expect(result.source.type).toBe('mysql');
+    expect(result.source.host).toBe('localhost');
+    expect(result.source.port).toBe(3306);
+    expect(result.source.user).toBe('root');
+    expect(result.source.password).toBe('pass');
+    expect(result.source.database).toBe('mydb');
+  });
+
+  it('should reject URI with individual connection fields', () => {
+    const cfg = clone(validConfig) as Record<string, unknown>;
+    cfg.source = { uri: 'mysql://root:pass@localhost:3306/db', host: 'other-host' };
+    expect(() => validateConfig(cfg)).toThrow('mutually exclusive');
+  });
+
+  it('should set empty password when URI has no password', () => {
+    const cfg = clone(validConfig) as Record<string, unknown>;
+    cfg.source = { uri: 'mysql://root@localhost:3306/mydb' };
+    const result = validateConfig(cfg);
+    expect(result.source.password).toBe('');
+  });
+
+  it('should reject non-boolean copyOnly', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).copyOnly = 'yes';
+    expect(() => validateConfig(cfg)).toThrow('"tables[0].copyOnly" must be a boolean');
+  });
 });

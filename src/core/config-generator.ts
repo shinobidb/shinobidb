@@ -14,6 +14,7 @@ export interface GenerateConfigOptions {
   deterministic?: boolean;
   seed?: string;
   truncateTarget?: boolean;
+  includeAllTables?: boolean;
 }
 
 const DEFAULT_CONNECTION: DatabaseConnectionConfig = {
@@ -55,6 +56,20 @@ export function generateConfig(
       name: detection.column,
       strategy: detection.suggestedMaskingStrategy,
     });
+  }
+
+  if (options.includeAllTables && scanResult.scannedTables) {
+    for (const scanned of scanResult.scannedTables) {
+      const key = `${scanned.schema}.${scanned.table}`;
+      if (!tableMap.has(key)) {
+        tableMap.set(key, {
+          schema: scanned.schema,
+          table: scanned.table,
+          columns: [],
+          copyOnly: true,
+        });
+      }
+    }
   }
 
   const tables = Array.from(tableMap.values());

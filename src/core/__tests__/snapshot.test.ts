@@ -21,6 +21,7 @@ const sampleResult: ScanResult = {
   ],
   tablesScanned: 1,
   columnsScanned: 5,
+  scannedTables: [{ schema: 'public', table: 'users' }],
 };
 
 beforeEach(async () => {

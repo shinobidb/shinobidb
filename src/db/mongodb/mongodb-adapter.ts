@@ -221,6 +221,15 @@ export class MongoDBAdapter implements DatabaseAdapter {
     }
   }
 
+  async tableExists(_schema: string, _table: string): Promise<boolean> {
+    // MongoDB collections are created automatically on first write
+    return true;
+  }
+
+  async createTable(_schema: string, _table: string, _columns: ColumnInfo[]): Promise<void> {
+    // MongoDB is schemaless; collections are created automatically on first write
+  }
+
   async destroy(): Promise<void> {
     if (this.client) {
       await this.client.close();

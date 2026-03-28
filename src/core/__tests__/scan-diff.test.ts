@@ -20,6 +20,7 @@ function makeScanResult(detections: PiiDetectionResult[]): ScanResult {
     detections,
     tablesScanned: 1,
     columnsScanned: 10,
+    scannedTables: [],
   };
 }
 
