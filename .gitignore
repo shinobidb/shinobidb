@@ -25,3 +25,6 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Project notes
+TODO.md
