@@ -24,7 +24,8 @@ export async function executeMask(
 
   logger.info(`Starting mask: ${config.tables.length} table(s) to process`);
 
-  const targetSchema = config.target.type === 'mysql' ? config.target.database : undefined;
+  // MySQL and MongoDB use database name as schema; PostgreSQL uses real schema names
+  const targetSchema = config.target.type === 'postgres' ? undefined : config.target.database;
 
   for (const tableConfig of config.tables) {
     const targetSchemaName = targetSchema ?? tableConfig.schema;
