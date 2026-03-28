@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { Command } from 'commander';
+
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8')) as {
+  version: string;
+};
 
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig } from './core/config-loader.js';
@@ -25,7 +30,7 @@ const program = new Command();
 program
   .name('shinobidb')
   .description('Mask production database data for staging environments')
-  .version('0.0.1')
+  .version(pkg.version)
   .option('-v, --verbose', 'Enable debug logging');
 
 program.hook('preAction', (_thisCommand, actionCommand) => {

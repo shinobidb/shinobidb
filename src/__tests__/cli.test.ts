@@ -1,4 +1,10 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const pkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
+  version: string;
+};
 
 describe('CLI', () => {
   it('should show help text', () => {
@@ -11,7 +17,7 @@ describe('CLI', () => {
 
   it('should show version', () => {
     const result = execFileSync('npx', ['tsx', 'src/cli.ts', '--version'], { encoding: 'utf-8' });
-    expect(result.trim()).toBe('0.0.1');
+    expect(result.trim()).toBe(pkg.version);
   });
 
   it('should show scan command help', () => {

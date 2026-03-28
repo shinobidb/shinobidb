@@ -1,6 +1,6 @@
 {
   "name": "shinobidb",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "CLI tool for masking production database data for staging environments",
   "type": "module",
   "license": "MIT",
@@ -10,14 +10,43 @@
   "bin": {
     "shinobidb": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "!dist/**/__tests__",
+    "!dist/**/__mocks__",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "database",
+    "masking",
+    "pii",
+    "anonymization",
+    "staging",
+    "mysql",
+    "postgresql",
+    "cli",
+    "data-protection",
+    "gdpr"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tsubotsubo2/shinobidb.git"
+  },
+  "homepage": "https://github.com/tsubotsubo2/shinobidb#readme",
+  "bugs": {
+    "url": "https://github.com/tsubotsubo2/shinobidb/issues"
+  },
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "build": "tsc",
+    "clean": "rm -rf dist",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:e2e": "jest --config jest.e2e.config.js",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build",
     "prepare": "husky"
   },
   "lint-staged": {
