@@ -46,6 +46,9 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:e2e": "jest --config jest.e2e.config.js",
+    "release:patch": "npm version patch && git push && git push --tags",
+    "release:minor": "npm version minor && git push && git push --tags",
+    "release:major": "npm version major && git push && git push --tags",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build",
     "prepare": "husky"
   },
