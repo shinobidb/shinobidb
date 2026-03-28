@@ -4,10 +4,14 @@
   "description": "CLI tool for masking production database data for staging environments",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "shinobidb": "dist/cli.js"
+  },
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "prepare": "husky"
@@ -39,6 +43,8 @@
   },
   "dependencies": {
     "chalk": "^5.6.2",
-    "mysql2": "^3.20.0"
+    "commander": "^14.0.3",
+    "mysql2": "^3.20.0",
+    "yaml": "^2.8.3"
   }
 }
