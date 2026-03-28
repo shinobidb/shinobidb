@@ -1,6 +1,6 @@
 {
   "name": "shinobidb",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "CLI tool for masking production database data for staging environments",
   "type": "module",
   "license": "MIT",
