@@ -84,7 +84,18 @@ export class MongoDBAdapter implements DatabaseAdapter {
         .toArray();
 
       if (docs.length === 0) {
-        return [];
+        // MongoDB collections always have _id as primary key
+        return [
+          {
+            name: '_id',
+            dataType: 'objectId',
+            nullable: false,
+            isPrimaryKey: true,
+            isForeignKey: false,
+            defaultValue: null,
+            comment: null,
+          },
+        ];
       }
 
       // Build field info from sampled documents

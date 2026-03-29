@@ -232,11 +232,20 @@ describe('MongoDBAdapter', () => {
       expect(emailCol?.nullable).toBe(true);
     });
 
-    it('should return empty array for empty collection', async () => {
+    it('should return _id column for empty collection', async () => {
       mockAggregateToArray.mockResolvedValueOnce([]);
 
       const columns = await adapter.getColumns('testdb', 'empty');
-      expect(columns).toEqual([]);
+      expect(columns).toHaveLength(1);
+      expect(columns[0]).toEqual({
+        name: '_id',
+        dataType: 'objectId',
+        nullable: false,
+        isPrimaryKey: true,
+        isForeignKey: false,
+        defaultValue: null,
+        comment: null,
+      });
     });
 
     it('should handle mixed types', async () => {

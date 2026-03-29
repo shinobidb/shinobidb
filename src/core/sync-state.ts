@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { ShinobiError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 import type { DatabaseConnectionConfig } from '../shared/types.js';
 
@@ -44,6 +45,13 @@ export async function loadSyncState(filePath: string): Promise<SyncState | null>
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
+    }
+    if (err instanceof SyntaxError) {
+      throw new ShinobiError(
+        `Sync state file is corrupted: ${filePath}. Delete the file or run with --full-refresh.`,
+        'SYNC_STATE_CORRUPTED',
+        err,
+      );
     }
     throw err;
   }

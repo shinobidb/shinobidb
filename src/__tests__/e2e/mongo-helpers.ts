@@ -2,7 +2,7 @@ import { MongoClient, type Db } from 'mongodb';
 
 export const MONGO_SOURCE_CONFIG = {
   host: '127.0.0.1',
-  port: 27017,
+  port: 27020,
   user: 'admin',
   password: 'rootpass',
   database: 'source_db',
@@ -10,7 +10,7 @@ export const MONGO_SOURCE_CONFIG = {
 
 export const MONGO_TARGET_CONFIG = {
   host: '127.0.0.1',
-  port: 27018,
+  port: 27021,
   user: 'admin',
   password: 'rootpass',
   database: 'target_db',

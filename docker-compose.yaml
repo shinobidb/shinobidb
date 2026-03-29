@@ -57,7 +57,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: rootpass
     ports:
-      - '27017:27017'
+      - '27020:27017'
     healthcheck:
       test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')", '-u', 'admin', '-p', 'rootpass']
       interval: 5s
@@ -70,7 +70,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: rootpass
     ports:
-      - '27018:27017'
+      - '27021:27017'
     healthcheck:
       test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')", '-u', 'admin', '-p', 'rootpass']
       interval: 5s

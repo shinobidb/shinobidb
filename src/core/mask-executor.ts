@@ -66,6 +66,7 @@ export interface MaskExecuteOptions {
   concurrency?: number;
   onProgress?: ProgressCallback;
   fullRefresh?: boolean;
+  syncStateDir?: string;
 }
 
 export async function executeMask(
@@ -90,7 +91,7 @@ export async function executeMask(
 
   // Load or create sync state for incremental sync
   const hasIncrementalTables = config.tables.some((t) => t.incremental);
-  const syncStatePath = getSyncStatePath();
+  const syncStatePath = getSyncStatePath(options.syncStateDir);
   const sourceFingerprint = createSourceFingerprint(config.source);
   let syncState: SyncState | null = null;
 
@@ -174,6 +175,20 @@ export async function executeMask(
         );
       }
       tablePrimaryKeys.set(getTableKey(tableConfig.schema, tableConfig.table), pkColumns);
+
+      // Verify target table also has PK (required for upsert operations)
+      const targetSchemaName = tableSchemaMap.get(
+        getTableKey(tableConfig.schema, tableConfig.table),
+      )!;
+      const targetColumns = await target.getColumns(targetSchemaName, tableConfig.table);
+      const targetPkColumns = targetColumns.filter((c) => c.isPrimaryKey);
+      if (targetPkColumns.length === 0) {
+        throw new ShinobiError(
+          'TARGET_NO_PK',
+          `Target table "${targetSchemaName}.${tableConfig.table}" has no primary key. ` +
+            'Primary key is required on target for incremental sync (upsert).',
+        );
+      }
     }
   }
 
@@ -204,7 +219,7 @@ export async function executeMask(
         ? (rows: Record<string, unknown>[]) => {
             if (rows.length > 0) {
               const lastRow = rows[rows.length - 1]!;
-              maxCursor = String(lastRow[tableConfig.incremental!.column] ?? maxCursor);
+              maxCursor = serializeCursor(lastRow[tableConfig.incremental!.column] ?? maxCursor);
             }
           }
         : undefined;
@@ -377,7 +392,7 @@ async function copyTableIncremental(
   const filter: ReadFilter = {
     column: inc.column,
     operator: '>',
-    value: inc.strategy === 'cursor' ? Number(tableState.cursor) : tableState.cursor,
+    value: deserializeCursorValue(tableState.cursor, inc.strategy),
     orderBy: 'ASC',
   };
 
@@ -395,7 +410,7 @@ async function copyTableIncremental(
       if (rows.length > 0) {
         await target.upsertRows(targetSchema, table, rows, primaryKey);
         const lastRow = rows[rows.length - 1]!;
-        maxCursor = String(lastRow[inc.column] ?? maxCursor);
+        maxCursor = serializeCursor(lastRow[inc.column] ?? maxCursor);
       }
       onBatchDone(rows.length);
     },
@@ -422,7 +437,7 @@ async function processTableIncremental(
   const filter: ReadFilter = {
     column: inc.column,
     operator: '>',
-    value: inc.strategy === 'cursor' ? Number(tableState.cursor) : tableState.cursor,
+    value: deserializeCursorValue(tableState.cursor, inc.strategy),
     orderBy: 'ASC',
   };
 
@@ -447,7 +462,7 @@ async function processTableIncremental(
       if (maskedRows.length > 0) {
         await target.upsertRows(targetSchema, table, maskedRows, primaryKey);
         const lastRow = rows[rows.length - 1]!;
-        maxCursor = String(lastRow[inc.column] ?? maxCursor);
+        maxCursor = serializeCursor(lastRow[inc.column] ?? maxCursor);
       }
 
       rowIndex += rows.length;
@@ -488,6 +503,35 @@ async function processTable(
     rowIndex += rows.length;
     onBatchDone(rows.length);
   });
+}
+
+function deserializeCursorValue(
+  cursor: string,
+  strategy: 'timestamp' | 'cursor',
+): string | number | Date {
+  if (strategy === 'cursor') {
+    return Number(cursor);
+  }
+  // For timestamp strategy, try to parse back to Date for DB adapters
+  // that require native Date objects (e.g. MongoDB)
+  const parsed = new Date(cursor);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+  return cursor;
+}
+
+function serializeCursor(value: unknown): string {
+  if (value instanceof Date) {
+    // Use local timezone format (YYYY-MM-DD HH:MM:SS) so the value can be
+    // passed back to the DB as a filter parameter without timezone mismatch.
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return (
+      `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
+      `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`
+    );
+  }
+  return String(value);
 }
 
 function maskRow(

@@ -826,6 +826,7 @@ describe('executeMask incremental sync', () => {
     (source.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
 
     const target = createMockAdapter();
+    (target.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
     const config = makeConfig({
       tables: [
         {
@@ -907,6 +908,7 @@ describe('executeMask incremental sync', () => {
     };
 
     const target = createMockAdapter();
+    (target.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
     const config = makeConfig({
       tables: [
         {
@@ -954,6 +956,7 @@ describe('executeMask incremental sync', () => {
     (source.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
 
     const target = createMockAdapter();
+    (target.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
     const config = makeConfig({
       tables: [
         {

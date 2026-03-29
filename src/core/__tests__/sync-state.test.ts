@@ -116,6 +116,13 @@ describe('sync-state', () => {
       const result = await loadSyncState(filePath);
       expect(result).toBeNull();
     });
+
+    it('should throw SYNC_STATE_CORRUPTED for invalid JSON', async () => {
+      const filePath = join(tempDir, 'sync-state.json');
+      await writeFile(filePath, '{broken', 'utf-8');
+
+      await expect(loadSyncState(filePath)).rejects.toThrow('corrupted');
+    });
   });
 
   describe('saveSyncState', () => {
