@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![npm downloads](https://img.shields.io/npm/dm/shinobidb.svg)](https://www.npmjs.com/package/shinobidb)
 
+[日本語](README.ja.md)
+
 Production database data masking tool for staging environments. Scans your database for PII columns, generates a masking config, and copies data with sensitive fields anonymized.
 
 ## Requirements
@@ -48,10 +50,13 @@ Connects to the database, reads the schema, and detects PII columns by column na
 ```bash
 shinobidb scan \
   --host <host> --port <port> --user <user> --password <password> \
-  [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] [--json]
+  [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
+  [--sample-content] [--json]
 ```
 
 Output includes detected columns with category, confidence score, and suggested masking strategy.
+
+Use `--sample-content` to also sample actual row data and detect PII by content patterns (emails, phone numbers, IPs, credit card numbers, SSNs). When both column name and content detectors match the same column, the higher-confidence result is kept.
 
 ### `shinobidb config`
 
