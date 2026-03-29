@@ -1,0 +1,42 @@
+name: GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section for this version from CHANGELOG.md
+          BODY=$(awk "/^## \[${VERSION}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            # Fallback: use commits since last tag
+            PREV_TAG=$(git tag --sort=-v:refname | head -2 | tail -1)
+            if [ -n "$PREV_TAG" ]; then
+              BODY=$(git log "${PREV_TAG}..${GITHUB_REF_NAME}" --pretty=format:"- %s" --no-merges)
+            else
+              BODY=$(git log --pretty=format:"- %s" --no-merges)
+            fi
+          fi
+          echo "body<<ENDOFBODY" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "ENDOFBODY" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+          generate_release_notes: false
