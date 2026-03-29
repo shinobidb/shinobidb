@@ -208,4 +208,36 @@ describe('scan', () => {
     expect(adapter.getForeignKeys).toHaveBeenCalledTimes(2);
     expect(adapter.getRowCount).toHaveBeenCalledTimes(2);
   });
+
+  it('should deduplicate detections keeping highest confidence', async () => {
+    const adapter = createMockAdapter();
+    const detector1 = createMockDetector([
+      {
+        schema: 'test_db',
+        table: 'users',
+        column: 'email',
+        category: 'email',
+        confidence: 0.7,
+        reasoning: 'column name match',
+        suggestedMaskingStrategy: 'hash_email',
+      },
+    ]);
+    const detector2 = createMockDetector([
+      {
+        schema: 'test_db',
+        table: 'users',
+        column: 'email',
+        category: 'email',
+        confidence: 0.9,
+        reasoning: 'content sampling: 95/100 values match',
+        suggestedMaskingStrategy: 'hash_email',
+      },
+    ]);
+
+    const result = await scan(adapter, [detector1, detector2]);
+
+    expect(result.detections).toHaveLength(1);
+    expect(result.detections[0]!.confidence).toBe(0.9);
+    expect(result.detections[0]!.reasoning).toContain('content sampling');
+  });
 });

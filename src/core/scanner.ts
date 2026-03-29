@@ -61,12 +61,23 @@ export async function scan(
 
   logger.info(`Found ${allTables.length} table(s), ${totalColumns} column(s) total`);
 
-  const allDetections: PiiDetectionResult[] = [];
+  const rawDetections: PiiDetectionResult[] = [];
 
   for (const detector of detectors) {
     const detections = await detector.detect(allTables);
-    allDetections.push(...detections);
+    rawDetections.push(...detections);
   }
+
+  // Deduplicate: when multiple detectors find the same column, keep highest confidence
+  const deduped = new Map<string, PiiDetectionResult>();
+  for (const d of rawDetections) {
+    const key = `${d.schema}.${d.table}.${d.column}`;
+    const existing = deduped.get(key);
+    if (!existing || d.confidence > existing.confidence) {
+      deduped.set(key, d);
+    }
+  }
+  const allDetections = Array.from(deduped.values());
 
   logger.success(`Scan complete: ${allDetections.length} PII column(s) detected`);
 

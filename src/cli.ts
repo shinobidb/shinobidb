@@ -22,6 +22,7 @@ import { scan } from './core/scanner.js';
 import { saveSnapshot, loadSnapshot } from './core/snapshot.js';
 import { createAdapter } from './db/factory.js';
 import { createDefaultDetectors } from './detection/detector-factory.js';
+import { ContentDetector } from './detection/detectors/content-detector.js';
 import { loadCustomStrategies } from './masking/custom-strategy-loader.js';
 import { createDefaultRegistry } from './masking/strategy-registry.js';
 import {
@@ -62,6 +63,7 @@ program
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
   .option('--json', 'Output as JSON')
+  .option('--sample-content', 'Sample actual data to detect PII by content patterns')
   .option('--snapshot [file]', 'Save scan results to a snapshot file', false)
   .option('--diff [file]', 'Compare with a previous snapshot', false)
   .action(
@@ -76,6 +78,7 @@ program
       schemas?: string;
       tables?: string;
       json?: boolean;
+      sampleContent?: boolean;
       snapshot?: boolean | string;
       diff?: boolean | string;
     }) => {
@@ -93,6 +96,9 @@ program
         await adapter.connect();
 
         const detectors = createDefaultDetectors();
+        if (opts.sampleContent) {
+          detectors.push(new ContentDetector(adapter));
+        }
         const result = await scan(adapter, detectors, {
           schemas: opts.schemas?.split(','),
           tables: opts.tables?.split(','),
@@ -176,6 +182,7 @@ program
   .option('--tables <tables>', 'Comma-separated table names')
   .option('--min-confidence <value>', 'Minimum confidence threshold', parseFloat)
   .option('--include-all-tables', 'Include tables without PII detections as copyOnly')
+  .option('--sample-content', 'Sample actual data to detect PII by content patterns')
   .option('-o, --output <file>', 'Output file path', 'shinobidb.yaml')
   .action(
     async (opts: {
@@ -190,6 +197,7 @@ program
       tables?: string;
       minConfidence?: number;
       includeAllTables?: boolean;
+      sampleContent?: boolean;
       output: string;
     }) => {
       const connConfig = resolveConnectionOpts(opts);
@@ -199,6 +207,9 @@ program
         await adapter.connect();
 
         const detectors = createDefaultDetectors();
+        if (opts.sampleContent) {
+          detectors.push(new ContentDetector(adapter));
+        }
         const scanResult = await scan(adapter, detectors, {
           schemas: opts.schemas?.split(','),
           tables: opts.tables?.split(','),
