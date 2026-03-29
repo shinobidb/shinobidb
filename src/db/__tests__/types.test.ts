@@ -1,4 +1,10 @@
-import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo, TableInfo } from '../types.js';
+import type {
+  ColumnInfo,
+  DatabaseAdapter,
+  ForeignKeyInfo,
+  ReadFilter,
+  TableInfo,
+} from '../types.js';
 
 describe('db types', () => {
   it('should allow constructing ColumnInfo', () => {
@@ -50,6 +56,7 @@ describe('db types', () => {
       getForeignKeys: jest.fn(),
       readRows: jest.fn(),
       writeRows: jest.fn(),
+      upsertRows: jest.fn(),
       truncateTable: jest.fn(),
       tableExists: jest.fn(),
       createTable: jest.fn(),
@@ -59,5 +66,40 @@ describe('db types', () => {
     expect(mockAdapter.connect).toBeDefined();
     expect(mockAdapter.destroy).toBeDefined();
     expect(mockAdapter.getForeignKeys).toBeDefined();
+  });
+
+  it('should allow constructing ReadFilter', () => {
+    const filter: ReadFilter = {
+      column: 'updated_at',
+      operator: '>',
+      value: '2026-03-28T12:00:00Z',
+      orderBy: 'ASC',
+    };
+
+    expect(filter.column).toBe('updated_at');
+    expect(filter.operator).toBe('>');
+    expect(filter.orderBy).toBe('ASC');
+  });
+
+  it('should allow ReadFilter with numeric value', () => {
+    const filter: ReadFilter = {
+      column: 'id',
+      operator: '>',
+      value: 1000,
+      orderBy: 'ASC',
+    };
+
+    expect(filter.value).toBe(1000);
+  });
+
+  it('should allow ReadFilter with Date value', () => {
+    const filter: ReadFilter = {
+      column: 'updated_at',
+      operator: '>=',
+      value: new Date('2026-03-28'),
+      orderBy: 'ASC',
+    };
+
+    expect(filter.value).toBeInstanceOf(Date);
   });
 });

@@ -245,6 +245,7 @@ program
   .option('--json', 'Output dry-run results as JSON')
   .option('--sync-schema', 'Auto-create missing tables in target from source schema')
   .option('--concurrency <n>', 'Number of tables to process in parallel', parseInt, 1)
+  .option('--full-refresh', 'Force full copy for incremental tables, resetting sync state')
   .option('--no-progress', 'Disable progress bar')
   .option('--audit-log <file>', 'Write audit log to file (JSON or CSV based on extension)')
   .action(
@@ -257,6 +258,7 @@ program
       json?: boolean;
       syncSchema?: boolean;
       concurrency: number;
+      fullRefresh?: boolean;
       progress: boolean;
       auditLog?: string;
     }) => {
@@ -339,6 +341,7 @@ program
           const result = await executeMask(source, target, config, registry, {
             syncSchema: opts.syncSchema,
             concurrency: opts.concurrency,
+            fullRefresh: opts.fullRefresh,
             onProgress,
           });
           const durationMs = Date.now() - startTime;

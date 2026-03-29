@@ -6,11 +6,17 @@ export interface ColumnMaskConfig {
   params?: Record<string, unknown>;
 }
 
+export interface IncrementalConfig {
+  strategy: 'timestamp' | 'cursor';
+  column: string;
+}
+
 export interface TableMaskConfig {
   schema: string;
   table: string;
   columns: ColumnMaskConfig[];
   copyOnly?: boolean;
+  incremental?: IncrementalConfig;
 }
 
 export interface MaskOptions {

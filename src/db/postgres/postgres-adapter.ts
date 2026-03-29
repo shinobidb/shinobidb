@@ -3,7 +3,7 @@ import pg from 'pg';
 import { DatabaseConnectionError, DatabaseQueryError } from '../../shared/errors.js';
 import { logger } from '../../shared/logger.js';
 import type { DatabaseConnectionConfig } from '../../shared/types.js';
-import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo } from '../types.js';
+import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo, ReadFilter } from '../types.js';
 
 export class PostgresAdapter implements DatabaseAdapter {
   private pool: pg.Pool | null = null;
@@ -160,6 +160,7 @@ export class PostgresAdapter implements DatabaseAdapter {
     table: string,
     batchSize: number,
     onBatch: (rows: Record<string, unknown>[]) => Promise<boolean | void>,
+    filter?: ReadFilter,
   ): Promise<void> {
     const pool = this.getPool();
     const identifier = `"${schema}"."${table}"`;
@@ -167,10 +168,18 @@ export class PostgresAdapter implements DatabaseAdapter {
 
     try {
       while (true) {
-        const result = await pool.query(`SELECT * FROM ${identifier} LIMIT $1 OFFSET $2`, [
-          batchSize,
-          offset,
-        ]);
+        let sql: string;
+        let params: unknown[];
+
+        if (filter) {
+          sql = `SELECT * FROM ${identifier} WHERE "${filter.column}" ${filter.operator} $1 ORDER BY "${filter.column}" ASC LIMIT $2 OFFSET $3`;
+          params = [filter.value, batchSize, offset];
+        } else {
+          sql = `SELECT * FROM ${identifier} LIMIT $1 OFFSET $2`;
+          params = [batchSize, offset];
+        }
+
+        const result = await pool.query(sql, params);
 
         if (result.rows.length === 0) break;
 
@@ -214,6 +223,50 @@ export class PostgresAdapter implements DatabaseAdapter {
       logger.debug(`Wrote ${rows.length} rows to ${schema}.${table}`);
     } catch (error) {
       throw new DatabaseQueryError(`Failed to write rows to ${schema}.${table}`, error);
+    }
+  }
+
+  async upsertRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const pool = this.getPool();
+    const identifier = `"${schema}"."${table}"`;
+    const pkColumns = Array.isArray(primaryKey) ? primaryKey : [primaryKey];
+
+    try {
+      const firstRow = rows[0]!;
+      const columnNames = Object.keys(firstRow);
+      const escapedColumns = columnNames.map((c) => `"${c}"`).join(', ');
+      const conflictColumns = pkColumns.map((c) => `"${c}"`).join(', ');
+
+      let paramIndex = 1;
+      const rowPlaceholders = rows
+        .map(() => {
+          const placeholders = columnNames.map(() => `$${paramIndex++}`).join(', ');
+          return `(${placeholders})`;
+        })
+        .join(', ');
+      const values = rows.flatMap((row) => columnNames.map((col) => row[col] ?? null));
+
+      const updateColumns = columnNames
+        .filter((c) => !pkColumns.includes(c))
+        .map((c) => `"${c}" = EXCLUDED."${c}"`)
+        .join(', ');
+
+      const sql = updateColumns
+        ? `INSERT INTO ${identifier} (${escapedColumns}) VALUES ${rowPlaceholders} ON CONFLICT (${conflictColumns}) DO UPDATE SET ${updateColumns}`
+        : `INSERT INTO ${identifier} (${escapedColumns}) VALUES ${rowPlaceholders} ON CONFLICT (${conflictColumns}) DO NOTHING`;
+
+      await pool.query(sql, values);
+
+      logger.debug(`Upserted ${rows.length} rows to ${schema}.${table}`);
+    } catch (error) {
+      throw new DatabaseQueryError(`Failed to upsert rows to ${schema}.${table}`, error);
     }
   }
 

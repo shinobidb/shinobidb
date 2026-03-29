@@ -184,4 +184,71 @@ describe('validateConfig', () => {
     (cfg.tables[0] as Record<string, unknown>).copyOnly = 'yes';
     expect(() => validateConfig(cfg)).toThrow('"tables[0].copyOnly" must be a boolean');
   });
+
+  it('should accept table with incremental timestamp config', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).incremental = {
+      strategy: 'timestamp',
+      column: 'updated_at',
+    };
+    const result = validateConfig(cfg);
+    expect(result.tables[0]!.incremental).toEqual({
+      strategy: 'timestamp',
+      column: 'updated_at',
+    });
+  });
+
+  it('should accept table with incremental cursor config', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).incremental = {
+      strategy: 'cursor',
+      column: 'id',
+    };
+    const result = validateConfig(cfg);
+    expect(result.tables[0]!.incremental!.strategy).toBe('cursor');
+  });
+
+  it('should reject incremental with invalid strategy', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).incremental = {
+      strategy: 'invalid',
+      column: 'id',
+    };
+    expect(() => validateConfig(cfg)).toThrow(
+      '"tables[0].incremental.strategy" must be one of: timestamp, cursor',
+    );
+  });
+
+  it('should reject incremental with missing column', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).incremental = {
+      strategy: 'timestamp',
+    };
+    expect(() => validateConfig(cfg)).toThrow(
+      '"tables[0].incremental.column" must be a non-empty string',
+    );
+  });
+
+  it('should reject incremental with empty column', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).incremental = {
+      strategy: 'cursor',
+      column: '',
+    };
+    expect(() => validateConfig(cfg)).toThrow(
+      '"tables[0].incremental.column" must be a non-empty string',
+    );
+  });
+
+  it('should reject non-object incremental', () => {
+    const cfg = clone(validConfig);
+    (cfg.tables[0] as Record<string, unknown>).incremental = 'yes';
+    expect(() => validateConfig(cfg)).toThrow('"tables[0].incremental" must be an object');
+  });
+
+  it('should accept table without incremental (backward compatible)', () => {
+    const cfg = clone(validConfig);
+    const result = validateConfig(cfg);
+    expect(result.tables[0]!.incremental).toBeUndefined();
+  });
 });

@@ -3,7 +3,7 @@ import { MongoClient, type Document } from 'mongodb';
 import { DatabaseConnectionError, DatabaseQueryError } from '../../shared/errors.js';
 import { logger } from '../../shared/logger.js';
 import type { DatabaseConnectionConfig } from '../../shared/types.js';
-import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo } from '../types.js';
+import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo, ReadFilter } from '../types.js';
 
 const SAMPLE_SIZE = 100;
 
@@ -159,6 +159,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
     table: string,
     batchSize: number,
     onBatch: (rows: Record<string, unknown>[]) => Promise<boolean | void>,
+    filter?: ReadFilter,
   ): Promise<void> {
     const client = this.getClient();
     const db = client.db(schema);
@@ -166,9 +167,17 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
     let offset = 0;
 
+    const mongoOperator = filter?.operator === '>=' ? '$gte' : '$gt';
+    const query = filter ? { [filter.column]: { [mongoOperator]: filter.value } } : {};
+    const sort = filter ? { [filter.column]: 1 as const } : undefined;
+
     try {
       while (true) {
-        const docs = await collection.find({}).skip(offset).limit(batchSize).toArray();
+        let cursor = collection.find(query).skip(offset).limit(batchSize);
+        if (sort) {
+          cursor = cursor.sort(sort);
+        }
+        const docs = await cursor.toArray();
 
         if (docs.length === 0) break;
 
@@ -205,6 +214,41 @@ export class MongoDBAdapter implements DatabaseAdapter {
       logger.debug(`Wrote ${rows.length} rows to ${schema}.${table}`);
     } catch (error) {
       throw new DatabaseQueryError(`Failed to write rows to ${schema}.${table}`, error);
+    }
+  }
+
+  async upsertRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const client = this.getClient();
+    const db = client.db(schema);
+    const collection = db.collection(table);
+    const pkColumns = Array.isArray(primaryKey) ? primaryKey : [primaryKey];
+
+    try {
+      const operations = rows.map((row) => {
+        const filter: Record<string, unknown> = {};
+        for (const pk of pkColumns) {
+          filter[pk] = row[pk];
+        }
+        return {
+          updateOne: {
+            filter,
+            update: { $set: row as Document },
+            upsert: true,
+          },
+        };
+      });
+
+      await collection.bulkWrite(operations);
+      logger.debug(`Upserted ${rows.length} rows to ${schema}.${table}`);
+    } catch (error) {
+      throw new DatabaseQueryError(`Failed to upsert rows to ${schema}.${table}`, error);
     }
   }
 

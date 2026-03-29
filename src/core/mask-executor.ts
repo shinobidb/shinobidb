@@ -1,11 +1,21 @@
 import pLimit from 'p-limit';
 
 import type { ShinobiConfig, TableMaskConfig } from '../config/types.js';
-import type { DatabaseAdapter } from '../db/types.js';
+import type { DatabaseAdapter, ReadFilter } from '../db/types.js';
 import type { StrategyRegistry } from '../masking/strategy-registry.js';
 import type { MaskingContext } from '../masking/types.js';
 import { ShinobiError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
+
+import {
+  createEmptySyncState,
+  createSourceFingerprint,
+  getTableKey,
+  getSyncStatePath,
+  loadSyncState,
+  saveSyncState,
+} from './sync-state.js';
+import type { SyncState, TableSyncState } from './sync-state.js';
 
 export interface TableResult {
   schema: string;
@@ -55,6 +65,7 @@ export interface MaskExecuteOptions {
   syncSchema?: boolean;
   concurrency?: number;
   onProgress?: ProgressCallback;
+  fullRefresh?: boolean;
 }
 
 export async function executeMask(
@@ -76,6 +87,26 @@ export async function executeMask(
 
   // MySQL and MongoDB use database name as schema; PostgreSQL uses real schema names
   const targetSchema = config.target.type === 'postgres' ? undefined : config.target.database;
+
+  // Load or create sync state for incremental sync
+  const hasIncrementalTables = config.tables.some((t) => t.incremental);
+  const syncStatePath = getSyncStatePath();
+  const sourceFingerprint = createSourceFingerprint(config.source);
+  let syncState: SyncState | null = null;
+
+  if (hasIncrementalTables && !options.fullRefresh) {
+    syncState = await loadSyncState(syncStatePath);
+    if (syncState && syncState.sourceFingerprint !== sourceFingerprint) {
+      logger.warn(
+        'Source connection has changed since last sync. Running full refresh for incremental tables.',
+      );
+      syncState = null;
+    }
+  }
+
+  if (!syncState) {
+    syncState = createEmptySyncState(sourceFingerprint);
+  }
 
   // Estimate total rows for progress
   let totalEstimatedRows = 0;
@@ -118,9 +149,31 @@ export async function executeMask(
       }
     }
 
-    if (config.options.truncateTarget && exists) {
+    // For incremental tables with existing state, skip truncation
+    const tableKey = getTableKey(tableConfig.schema, tableConfig.table);
+    const isIncremental = !!tableConfig.incremental && !options.fullRefresh;
+    const hasState = !!syncState.tables[tableKey];
+
+    if (config.options.truncateTarget && exists && !(isIncremental && hasState)) {
       logger.debug(`Truncating target: ${targetSchemaName}.${tableConfig.table}`);
       await target.truncateTable(targetSchemaName, tableConfig.table);
+    }
+  }
+
+  // Get primary key info for tables that need incremental sync
+  const tablePrimaryKeys = new Map<string, string[]>();
+  for (const tableConfig of config.tables) {
+    if (tableConfig.incremental) {
+      const columns = await source.getColumns(tableConfig.schema, tableConfig.table);
+      const pkColumns = columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
+      if (pkColumns.length === 0) {
+        throw new ShinobiError(
+          'INCREMENTAL_NO_PK',
+          `Table "${tableConfig.schema}.${tableConfig.table}" has no primary key. ` +
+            'Primary key is required for incremental sync (upsert).',
+        );
+      }
+      tablePrimaryKeys.set(getTableKey(tableConfig.schema, tableConfig.table), pkColumns);
     }
   }
 
@@ -129,6 +182,9 @@ export async function executeMask(
 
   const tasks = config.tables.map((tableConfig) => {
     const targetSchemaName = tableSchemaMap.get(`${tableConfig.schema}.${tableConfig.table}`)!;
+    const tableKey = getTableKey(tableConfig.schema, tableConfig.table);
+    const isIncremental = !!tableConfig.incremental && !options.fullRefresh;
+    const tableState = isIncremental ? syncState.tables[tableKey] : undefined;
 
     return limit(async () => {
       let tableRowsProcessed = 0;
@@ -142,8 +198,52 @@ export async function executeMask(
         emitProgress(`${tableConfig.schema}.${tableConfig.table}`);
       };
 
+      // Track max cursor value for incremental tables
+      let maxCursor = syncState.tables[tableKey]?.cursor ?? '';
+      const cursorTracker = tableConfig.incremental
+        ? (rows: Record<string, unknown>[]) => {
+            if (rows.length > 0) {
+              const lastRow = rows[rows.length - 1]!;
+              maxCursor = String(lastRow[tableConfig.incremental!.column] ?? maxCursor);
+            }
+          }
+        : undefined;
+
       if (tableConfig.copyOnly) {
-        await copyTable(source, target, tableConfig, targetSchemaName, config, onBatchDone);
+        if (isIncremental && tableState) {
+          await copyTableIncremental(
+            source,
+            target,
+            tableConfig,
+            targetSchemaName,
+            config,
+            tableState,
+            tablePrimaryKeys.get(tableKey)!,
+            onBatchDone,
+          );
+        } else {
+          await copyTable(
+            source,
+            target,
+            tableConfig,
+            targetSchemaName,
+            config,
+            onBatchDone,
+            cursorTracker,
+          );
+        }
+      } else if (isIncremental && tableState) {
+        await processTableIncremental(
+          source,
+          target,
+          tableConfig,
+          targetSchemaName,
+          config,
+          registry,
+          tableState,
+          tablePrimaryKeys.get(tableKey)!,
+          onBatchDone,
+        );
       } else {
         await processTable(
           source,
@@ -153,7 +253,20 @@ export async function executeMask(
           config,
           registry,
           onBatchDone,
+          cursorTracker,
         );
+      }
+
+      // Update sync state for incremental tables
+      if (tableConfig.incremental) {
+        // For incremental with existing state, cursor was updated by the incremental functions
+        const cursor = tableState ? tableState.cursor : maxCursor;
+        syncState.tables[tableKey] = {
+          strategy: tableConfig.incremental.strategy,
+          cursor,
+          lastSyncedAt: new Date().toISOString(),
+          rowsSynced: tableRowsProcessed,
+        };
       }
 
       result.tableDetails.push({
@@ -170,6 +283,11 @@ export async function executeMask(
   });
 
   await Promise.all(tasks);
+
+  // Save sync state if any incremental tables exist
+  if (hasIncrementalTables) {
+    await saveSyncState(syncStatePath, syncState);
+  }
 
   logger.success(
     `Mask complete: ${result.tablesProcessed} table(s), ${result.rowsProcessed} row(s) processed, ${result.rowsWritten} row(s) written`,
@@ -229,6 +347,7 @@ async function copyTable(
   targetSchema: string,
   config: ShinobiConfig,
   onBatchDone: (rowCount: number) => void,
+  onCursorTrack?: (rows: Record<string, unknown>[]) => void,
 ): Promise<void> {
   const { schema, table } = tableConfig;
   logger.info(`Copying ${schema}.${table} → ${targetSchema}.${table} (no masking)`);
@@ -237,8 +356,107 @@ async function copyTable(
     if (rows.length > 0) {
       await target.writeRows(targetSchema, table, rows);
     }
+    onCursorTrack?.(rows);
     onBatchDone(rows.length);
   });
+}
+
+async function copyTableIncremental(
+  source: DatabaseAdapter,
+  target: DatabaseAdapter,
+  tableConfig: TableMaskConfig,
+  targetSchema: string,
+  config: ShinobiConfig,
+  tableState: TableSyncState,
+  primaryKey: string[],
+  onBatchDone: (rowCount: number) => void,
+): Promise<void> {
+  const { schema, table } = tableConfig;
+  const inc = tableConfig.incremental!;
+
+  const filter: ReadFilter = {
+    column: inc.column,
+    operator: '>',
+    value: inc.strategy === 'cursor' ? Number(tableState.cursor) : tableState.cursor,
+    orderBy: 'ASC',
+  };
+
+  logger.info(
+    `Incremental copy ${schema}.${table} → ${targetSchema}.${table} (${inc.strategy}: ${inc.column} > ${tableState.cursor})`,
+  );
+
+  let maxCursor = tableState.cursor;
+
+  await source.readRows(
+    schema,
+    table,
+    config.options.batchSize,
+    async (rows) => {
+      if (rows.length > 0) {
+        await target.upsertRows(targetSchema, table, rows, primaryKey);
+        const lastRow = rows[rows.length - 1]!;
+        maxCursor = String(lastRow[inc.column] ?? maxCursor);
+      }
+      onBatchDone(rows.length);
+    },
+    filter,
+  );
+
+  tableState.cursor = maxCursor;
+}
+
+async function processTableIncremental(
+  source: DatabaseAdapter,
+  target: DatabaseAdapter,
+  tableConfig: TableMaskConfig,
+  targetSchema: string,
+  config: ShinobiConfig,
+  registry: StrategyRegistry,
+  tableState: TableSyncState,
+  primaryKey: string[],
+  onBatchDone: (rowCount: number) => void,
+): Promise<void> {
+  const { schema, table, columns } = tableConfig;
+  const inc = tableConfig.incremental!;
+
+  const filter: ReadFilter = {
+    column: inc.column,
+    operator: '>',
+    value: inc.strategy === 'cursor' ? Number(tableState.cursor) : tableState.cursor,
+    orderBy: 'ASC',
+  };
+
+  let rowIndex = 0;
+  let maxCursor = tableState.cursor;
+
+  logger.info(
+    `Incremental processing ${schema}.${table} → ${targetSchema}.${table} (${inc.strategy}: ${inc.column} > ${tableState.cursor}, ${columns.length} column(s) to mask)`,
+  );
+
+  await source.readRows(
+    schema,
+    table,
+    config.options.batchSize,
+    async (rows) => {
+      const maskedRows = rows.map((row, i) => {
+        const pkValue =
+          primaryKey.length === 1 ? row[primaryKey[0]!] : primaryKey.map((k) => row[k]);
+        return maskRow(row, tableConfig, config, registry, rowIndex + i, pkValue);
+      });
+
+      if (maskedRows.length > 0) {
+        await target.upsertRows(targetSchema, table, maskedRows, primaryKey);
+        const lastRow = rows[rows.length - 1]!;
+        maxCursor = String(lastRow[inc.column] ?? maxCursor);
+      }
+
+      rowIndex += rows.length;
+      onBatchDone(rows.length);
+    },
+    filter,
+  );
+
+  tableState.cursor = maxCursor;
 }
 
 async function processTable(
@@ -249,6 +467,7 @@ async function processTable(
   config: ShinobiConfig,
   registry: StrategyRegistry,
   onBatchDone: (rowCount: number) => void,
+  onCursorTrack?: (rows: Record<string, unknown>[]) => void,
 ): Promise<void> {
   const { schema, table, columns } = tableConfig;
   let rowIndex = 0;
@@ -265,6 +484,7 @@ async function processTable(
       await target.writeRows(targetSchema, table, maskedRows);
     }
 
+    onCursorTrack?.(rows);
     rowIndex += rows.length;
     onBatchDone(rows.length);
   });
@@ -276,6 +496,7 @@ function maskRow(
   config: ShinobiConfig,
   registry: StrategyRegistry,
   rowIndex: number,
+  primaryKeyValue?: unknown,
 ): Record<string, unknown> {
   const masked = { ...row };
 
@@ -290,6 +511,7 @@ function maskRow(
       table: tableConfig.table,
       column: colConfig.name,
       rowIndex,
+      primaryKeyValue,
     };
 
     const seed = config.options.deterministic ? config.options.seed : undefined;

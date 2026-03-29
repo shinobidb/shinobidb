@@ -23,6 +23,13 @@ export interface TableInfo {
   estimatedRowCount: number;
 }
 
+export interface ReadFilter {
+  column: string;
+  operator: '>' | '>=';
+  value: string | number | Date;
+  orderBy: 'ASC';
+}
+
 export interface DatabaseAdapter {
   connect(): Promise<void>;
 
@@ -41,9 +48,17 @@ export interface DatabaseAdapter {
     table: string,
     batchSize: number,
     onBatch: (rows: Record<string, unknown>[]) => Promise<boolean | void>,
+    filter?: ReadFilter,
   ): Promise<void>;
 
   writeRows(schema: string, table: string, rows: Record<string, unknown>[]): Promise<void>;
+
+  upsertRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void>;
 
   truncateTable(schema: string, table: string): Promise<void>;
 

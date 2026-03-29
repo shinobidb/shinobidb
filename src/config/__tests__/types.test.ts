@@ -1,4 +1,10 @@
-import type { ColumnMaskConfig, MaskOptions, ShinobiConfig, TableMaskConfig } from '../types.js';
+import type {
+  ColumnMaskConfig,
+  IncrementalConfig,
+  MaskOptions,
+  ShinobiConfig,
+  TableMaskConfig,
+} from '../types.js';
 
 describe('config types', () => {
   it('should allow constructing ColumnMaskConfig', () => {
@@ -62,6 +68,23 @@ describe('config types', () => {
     expect(config.version).toBe('1');
     expect(config.source.type).toBe('mysql');
     expect(config.options.batchSize).toBe(1000);
+  });
+
+  it('should allow TableMaskConfig with incremental', () => {
+    const table: TableMaskConfig = {
+      schema: 'myapp',
+      table: 'users',
+      columns: [{ name: 'email', strategy: 'faker-email' }],
+      incremental: { strategy: 'timestamp', column: 'updated_at' },
+    };
+
+    expect(table.incremental!.strategy).toBe('timestamp');
+    expect(table.incremental!.column).toBe('updated_at');
+  });
+
+  it('should type-check IncrementalConfig', () => {
+    const inc: IncrementalConfig = { strategy: 'cursor', column: 'id' };
+    expect(inc.strategy).toBe('cursor');
   });
 
   it('should type-check MaskOptions', () => {

@@ -1,7 +1,8 @@
 import type { ShinobiConfig } from '../../config/types.js';
-import type { DatabaseAdapter } from '../../db/types.js';
+import type { ColumnInfo, DatabaseAdapter } from '../../db/types.js';
 import { createDefaultRegistry } from '../../masking/strategy-registry.js';
 import { executeMask, executeDryRun } from '../mask-executor.js';
+import * as syncStateModule from '../sync-state.js';
 
 function createMockAdapter(rows: Record<string, unknown>[][] = []): DatabaseAdapter {
   return {
@@ -24,6 +25,7 @@ function createMockAdapter(rows: Record<string, unknown>[][] = []): DatabaseAdap
       },
     ),
     writeRows: jest.fn(),
+    upsertRows: jest.fn(),
     truncateTable: jest.fn(),
     tableExists: jest.fn().mockResolvedValue(true),
     createTable: jest.fn(),
@@ -469,6 +471,7 @@ describe('executeDryRun', () => {
         },
       ),
       writeRows: jest.fn(),
+      upsertRows: jest.fn(),
       truncateTable: jest.fn(),
       tableExists: jest.fn().mockResolvedValue(true),
       createTable: jest.fn(),
@@ -768,5 +771,239 @@ describe('executeMask progress', () => {
     });
 
     expect(totalRows).toBe(100);
+  });
+});
+
+describe('executeMask incremental sync', () => {
+  const registry = createDefaultRegistry();
+
+  const idColumn: ColumnInfo = {
+    name: 'id',
+    dataType: 'int',
+    nullable: false,
+    isPrimaryKey: true,
+    isForeignKey: false,
+    defaultValue: null,
+    comment: null,
+  };
+
+  const emailColumn: ColumnInfo = {
+    name: 'email',
+    dataType: 'varchar',
+    nullable: true,
+    isPrimaryKey: false,
+    isForeignKey: false,
+    defaultValue: null,
+    comment: null,
+  };
+
+  const updatedAtColumn: ColumnInfo = {
+    name: 'updated_at',
+    dataType: 'datetime',
+    nullable: false,
+    isPrimaryKey: false,
+    isForeignKey: false,
+    defaultValue: null,
+    comment: null,
+  };
+
+  beforeEach(() => {
+    jest.spyOn(syncStateModule, 'loadSyncState').mockResolvedValue(null);
+    jest.spyOn(syncStateModule, 'saveSyncState').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('should do full copy on first run for incremental table (no state)', async () => {
+    const source = createMockAdapter([
+      [
+        { id: 1, email: 'a@test.com', first_name: 'Alice', updated_at: '2026-03-28T00:00:00Z' },
+        { id: 2, email: 'b@test.com', first_name: 'Bob', updated_at: '2026-03-29T00:00:00Z' },
+      ],
+    ]);
+    (source.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
+
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+          incremental: { strategy: 'timestamp', column: 'updated_at' },
+        },
+      ],
+    });
+
+    const result = await executeMask(source, target, config, registry);
+
+    expect(result.rowsProcessed).toBe(2);
+    expect(target.writeRows).toHaveBeenCalled();
+    expect(target.upsertRows).not.toHaveBeenCalled();
+    expect(syncStateModule.saveSyncState).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        tables: expect.objectContaining({
+          'test_db.users': expect.objectContaining({
+            strategy: 'timestamp',
+            cursor: '2026-03-29T00:00:00Z',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('should use filter and upsert on subsequent runs with existing state', async () => {
+    const existingState: syncStateModule.SyncState = {
+      version: 1,
+      sourceFingerprint: syncStateModule.createSourceFingerprint({
+        type: 'mysql',
+        host: 'localhost',
+        port: 3306,
+        user: 'root',
+        password: '',
+      }),
+      tables: {
+        'test_db.users': {
+          strategy: 'timestamp',
+          cursor: '2026-03-28T00:00:00Z',
+          lastSyncedAt: '2026-03-28T12:00:00Z',
+          rowsSynced: 100,
+        },
+      },
+    };
+    (syncStateModule.loadSyncState as jest.Mock).mockResolvedValue(existingState);
+
+    const incrementalRows = [
+      { id: 3, email: 'c@test.com', first_name: 'Charlie', updated_at: '2026-03-29T00:00:00Z' },
+    ];
+
+    const source: DatabaseAdapter = {
+      connect: jest.fn(),
+      getSchemas: jest.fn(),
+      getTables: jest.fn(),
+      getColumns: jest.fn().mockResolvedValue([idColumn, emailColumn, updatedAtColumn]),
+      getRowCount: jest.fn().mockResolvedValue(3),
+      getForeignKeys: jest.fn(),
+      readRows: jest.fn(
+        async (
+          _schema: string,
+          _table: string,
+          _batchSize: number,
+          onBatch: (rows: Record<string, unknown>[]) => Promise<boolean | void>,
+          _filter?: unknown,
+        ) => {
+          await onBatch(incrementalRows);
+        },
+      ),
+      writeRows: jest.fn(),
+      upsertRows: jest.fn(),
+      truncateTable: jest.fn(),
+      tableExists: jest.fn().mockResolvedValue(true),
+      createTable: jest.fn(),
+      destroy: jest.fn(),
+    };
+
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+          incremental: { strategy: 'timestamp', column: 'updated_at' },
+        },
+      ],
+    });
+
+    const result = await executeMask(source, target, config, registry);
+
+    expect(result.rowsProcessed).toBe(1);
+    expect(target.upsertRows).toHaveBeenCalled();
+    expect(target.writeRows).not.toHaveBeenCalled();
+    // Should not truncate incremental table with existing state
+    expect(target.truncateTable).not.toHaveBeenCalled();
+  });
+
+  it('should do full copy when --full-refresh is set', async () => {
+    const existingState: syncStateModule.SyncState = {
+      version: 1,
+      sourceFingerprint: syncStateModule.createSourceFingerprint({
+        type: 'mysql',
+        host: 'localhost',
+        port: 3306,
+        user: 'root',
+        password: '',
+      }),
+      tables: {
+        'test_db.users': {
+          strategy: 'timestamp',
+          cursor: '2026-03-28T00:00:00Z',
+          lastSyncedAt: '2026-03-28T12:00:00Z',
+          rowsSynced: 100,
+        },
+      },
+    };
+    (syncStateModule.loadSyncState as jest.Mock).mockResolvedValue(existingState);
+
+    const source = createMockAdapter([
+      [{ id: 1, email: 'a@test.com', first_name: 'Alice', updated_at: '2026-03-29T00:00:00Z' }],
+    ]);
+    (source.getColumns as jest.Mock).mockResolvedValue([idColumn, emailColumn, updatedAtColumn]);
+
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+          incremental: { strategy: 'timestamp', column: 'updated_at' },
+        },
+      ],
+    });
+
+    const result = await executeMask(source, target, config, registry, { fullRefresh: true });
+
+    expect(result.rowsProcessed).toBe(1);
+    expect(target.writeRows).toHaveBeenCalled();
+    expect(target.upsertRows).not.toHaveBeenCalled();
+  });
+
+  it('should throw when incremental table has no primary key', async () => {
+    const noPkColumn: ColumnInfo = {
+      ...emailColumn,
+      isPrimaryKey: false,
+    };
+    const source = createMockAdapter([]);
+    (source.getColumns as jest.Mock).mockResolvedValue([noPkColumn]);
+
+    const target = createMockAdapter();
+    const config = makeConfig({
+      tables: [
+        {
+          schema: 'test_db',
+          table: 'users',
+          columns: [{ name: 'email', strategy: 'hash_email' }],
+          incremental: { strategy: 'cursor', column: 'id' },
+        },
+      ],
+    });
+
+    await expect(executeMask(source, target, config, registry)).rejects.toThrow(
+      'INCREMENTAL_NO_PK',
+    );
+  });
+
+  it('should not save sync state for non-incremental tables', async () => {
+    const source = createMockAdapter([[{ id: 1, email: 'a@test.com', first_name: 'Alice' }]]);
+    const target = createMockAdapter();
+    const config = makeConfig();
+
+    await executeMask(source, target, config, registry);
+
+    expect(syncStateModule.saveSyncState).not.toHaveBeenCalled();
   });
 });

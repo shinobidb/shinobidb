@@ -142,6 +142,10 @@ function validateTables(value: unknown): void {
       throw new ConfigValidationError(`"tables[${i}].copyOnly" must be a boolean`);
     }
 
+    if (table.incremental !== undefined) {
+      validateIncremental(table.incremental, i);
+    }
+
     if (table.copyOnly === true) {
       if (table.columns !== undefined && Array.isArray(table.columns) && table.columns.length > 0) {
         throw new ConfigValidationError(
@@ -164,5 +168,26 @@ function validateTables(value: unknown): void {
         throw new ConfigValidationError(`"tables[${i}].columns[${j}].strategy" must be a string`);
       }
     }
+  }
+}
+
+function validateIncremental(value: unknown, tableIndex: number): void {
+  if (typeof value !== 'object' || value === null) {
+    throw new ConfigValidationError(`"tables[${tableIndex}].incremental" must be an object`);
+  }
+
+  const inc = value as Record<string, unknown>;
+
+  const validStrategies = ['timestamp', 'cursor'];
+  if (!validStrategies.includes(inc.strategy as string)) {
+    throw new ConfigValidationError(
+      `"tables[${tableIndex}].incremental.strategy" must be one of: ${validStrategies.join(', ')}`,
+    );
+  }
+
+  if (typeof inc.column !== 'string' || inc.column.length === 0) {
+    throw new ConfigValidationError(
+      `"tables[${tableIndex}].incremental.column" must be a non-empty string`,
+    );
   }
 }

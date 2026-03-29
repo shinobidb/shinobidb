@@ -3,6 +3,7 @@ export interface MaskingContext {
   table: string;
   column: string;
   rowIndex: number;
+  primaryKeyValue?: unknown;
 }
 
 export interface MaskingStrategy {
