@@ -152,6 +152,48 @@ tables:
 | `redact`          | Replace with `[REDACTED]`                                          |
 | `scrub_text`      | Detect and replace emails, IPs, and phone numbers within free text |
 
+### Custom Strategies
+
+Define your own masking strategies in JS/TS files and reference them from the config:
+
+```yaml
+customStrategies:
+  - ./my-strategies.js
+
+tables:
+  - schema: mydb
+    table: users
+    columns:
+      - name: nickname
+        strategy: custom_prefix
+        params:
+          prefix: 'user'
+```
+
+A custom strategy file exports objects with `name` (string) and `mask` (function):
+
+```js
+// my-strategies.js — default export (single strategy)
+export default {
+  name: 'custom_prefix',
+  mask(value, context, seed) {
+    if (typeof value !== 'string') return value;
+    const prefix = context.params?.prefix ?? 'MASKED';
+    return `${prefix}_${value}`;
+  },
+};
+```
+
+Multiple strategies can be exported as named exports or as an array:
+
+```js
+// multi-strategies.js — named exports
+export const maskA = { name: 'mask_a', mask: (v) => /* ... */ };
+export const maskB = { name: 'mask_b', mask: (v) => /* ... */ };
+```
+
+The `context` parameter provides `schema`, `table`, `column`, `rowIndex`, `primaryKeyValue`, and `params` (from the column config YAML).
+
 ## Architecture
 
 ```

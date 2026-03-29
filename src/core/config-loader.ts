@@ -45,6 +45,7 @@ export function validateConfig(raw: unknown): ShinobiConfig {
   validateConnectionConfig(obj.target, 'target');
   validateOptions(obj.options);
   validateTables(obj.tables);
+  validateCustomStrategies(obj.customStrategies);
 
   return raw as ShinobiConfig;
 }
@@ -167,6 +168,22 @@ function validateTables(value: unknown): void {
       if (typeof col.strategy !== 'string') {
         throw new ConfigValidationError(`"tables[${i}].columns[${j}].strategy" must be a string`);
       }
+    }
+  }
+}
+
+function validateCustomStrategies(value: unknown): void {
+  if (value === undefined) return;
+
+  if (!Array.isArray(value)) {
+    throw new ConfigValidationError('"customStrategies" must be an array of file paths');
+  }
+
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== 'string' || value[i].length === 0) {
+      throw new ConfigValidationError(
+        `"customStrategies[${i}]" must be a non-empty string (file path)`,
+      );
     }
   }
 }

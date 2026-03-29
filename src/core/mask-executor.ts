@@ -556,6 +556,7 @@ function maskRow(
       column: colConfig.name,
       rowIndex,
       primaryKeyValue,
+      params: colConfig.params,
     };
 
     const seed = config.options.deterministic ? config.options.seed : undefined;

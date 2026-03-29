@@ -4,6 +4,7 @@ export interface MaskingContext {
   column: string;
   rowIndex: number;
   primaryKeyValue?: unknown;
+  params?: Record<string, unknown>;
 }
 
 export interface MaskingStrategy {

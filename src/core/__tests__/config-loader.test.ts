@@ -251,4 +251,35 @@ describe('validateConfig', () => {
     const result = validateConfig(cfg);
     expect(result.tables[0]!.incremental).toBeUndefined();
   });
+
+  it('should accept config with customStrategies array', () => {
+    const cfg = clone(validConfig);
+    (cfg as Record<string, unknown>).customStrategies = ['./my-strategy.js'];
+    const result = validateConfig(cfg);
+    expect(result.customStrategies).toEqual(['./my-strategy.js']);
+  });
+
+  it('should accept config without customStrategies (backward compatible)', () => {
+    const cfg = clone(validConfig);
+    const result = validateConfig(cfg);
+    expect(result.customStrategies).toBeUndefined();
+  });
+
+  it('should reject customStrategies that is not an array', () => {
+    const cfg = clone(validConfig);
+    (cfg as Record<string, unknown>).customStrategies = './my-strategy.js';
+    expect(() => validateConfig(cfg)).toThrow('"customStrategies" must be an array');
+  });
+
+  it('should reject customStrategies with non-string entries', () => {
+    const cfg = clone(validConfig);
+    (cfg as Record<string, unknown>).customStrategies = [123];
+    expect(() => validateConfig(cfg)).toThrow('"customStrategies[0]" must be a non-empty string');
+  });
+
+  it('should reject customStrategies with empty string entries', () => {
+    const cfg = clone(validConfig);
+    (cfg as Record<string, unknown>).customStrategies = [''];
+    expect(() => validateConfig(cfg)).toThrow('"customStrategies[0]" must be a non-empty string');
+  });
 });

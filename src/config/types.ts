@@ -32,4 +32,5 @@ export interface ShinobiConfig {
   target: DatabaseConnectionConfig;
   options: MaskOptions;
   tables: TableMaskConfig[];
+  customStrategies?: string[];
 }

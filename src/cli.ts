@@ -21,6 +21,7 @@ import { scan } from './core/scanner.js';
 import { saveSnapshot, loadSnapshot } from './core/snapshot.js';
 import { createAdapter } from './db/factory.js';
 import { createDefaultDetectors } from './detection/detector-factory.js';
+import { loadCustomStrategies } from './masking/custom-strategy-loader.js';
 import { createDefaultRegistry } from './masking/strategy-registry.js';
 import {
   ShinobiError,
@@ -274,6 +275,10 @@ program
 
         const source = createAdapter(config.source);
         const registry = createDefaultRegistry();
+        if (config.customStrategies) {
+          const configDir = resolve(opts.config, '..');
+          await loadCustomStrategies(config.customStrategies, registry, configDir);
+        }
 
         try {
           await source.connect();
@@ -304,6 +309,10 @@ program
         const source = createAdapter(config.source);
         const target = createAdapter(config.target);
         const registry = createDefaultRegistry();
+        if (config.customStrategies) {
+          const configDir = resolve(opts.config, '..');
+          await loadCustomStrategies(config.customStrategies, registry, configDir);
+        }
 
         try {
           await source.connect();
