@@ -46,4 +46,17 @@ describe('CLI', () => {
     expect(result).toContain('--source-password');
     expect(result).toContain('--target-password');
   });
+
+  it('should show validate command help', () => {
+    const result = execFileSync('npx', ['tsx', 'src/cli.ts', 'validate', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(result).toContain('--config');
+    expect(result).toContain('--json');
+  });
+
+  it('should list validate in help text', () => {
+    const result = execFileSync('npx', ['tsx', 'src/cli.ts', '--help'], { encoding: 'utf-8' });
+    expect(result).toContain('validate');
+  });
 });

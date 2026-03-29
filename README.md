@@ -92,6 +92,16 @@ shinobidb scan ... --snapshot --diff
 
 The diff output shows new, removed, and changed PII columns. Exit code is 1 when changes are detected, making it easy to integrate into CI pipelines.
 
+### `shinobidb validate`
+
+Validate a config file without connecting to any database. Checks for unknown strategies, duplicate tables/columns, incremental column conflicts, and more.
+
+```bash
+shinobidb validate [-c <config-file>] [--json]
+```
+
+Exit code is 1 when errors are found. Warnings (e.g. cross-DB type mismatch) do not cause failure.
+
 ### Global Options
 
 - `-v, --verbose` — Enable debug logging with stack traces on errors

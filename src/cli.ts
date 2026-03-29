@@ -14,6 +14,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 import { buildAuditRecord, writeAuditLog } from './core/audit-logger.js';
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig } from './core/config-loader.js';
+import { validateConfigDeep } from './core/config-validator.js';
 import { executeMask, executeDryRun } from './core/mask-executor.js';
 import type { DryRunResult, ProgressInfo } from './core/mask-executor.js';
 import { diffScans } from './core/scan-diff.js';
@@ -234,6 +235,45 @@ program
       }
     },
   );
+
+program
+  .command('validate')
+  .description('Validate a config file for errors and warnings')
+  .option('-c, --config <file>', 'Config file path', 'shinobidb.yaml')
+  .option('--json', 'Output results as JSON')
+  .action(async (opts: { config: string; json?: boolean }) => {
+    const configPath = resolve(opts.config);
+    const config = await loadConfig(configPath);
+    const registry = createDefaultRegistry();
+    const configDir = resolve(configPath, '..');
+
+    const result = await validateConfigDeep(config, registry, configDir);
+
+    if (opts.json) {
+      logger.output(JSON.stringify(result, null, 2));
+    } else {
+      const errors = result.issues.filter((i) => i.level === 'error');
+      const warnings = result.issues.filter((i) => i.level === 'warning');
+
+      for (const issue of errors) {
+        logger.error(`ERROR: ${issue.message}`);
+      }
+      for (const issue of warnings) {
+        logger.warn(`WARNING: ${issue.message}`);
+      }
+
+      if (result.valid) {
+        logger.success(
+          `Config is valid${warnings.length > 0 ? ` (${warnings.length} warning(s))` : ''}`,
+        );
+      } else {
+        logger.error(
+          `Config has ${errors.length} error(s)${warnings.length > 0 ? ` and ${warnings.length} warning(s)` : ''}`,
+        );
+        process.exitCode = 1;
+      }
+    }
+  });
 
 program
   .command('mask')
