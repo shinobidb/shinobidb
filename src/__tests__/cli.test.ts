@@ -59,4 +59,20 @@ describe('CLI', () => {
     const result = execFileSync('npx', ['tsx', 'src/cli.ts', '--help'], { encoding: 'utf-8' });
     expect(result).toContain('validate');
   });
+
+  it('should show drift command help', () => {
+    const result = execFileSync('npx', ['tsx', 'src/cli.ts', 'drift', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(result).toContain('--json');
+    expect(result).toContain('--apply');
+    expect(result).toContain('--min-confidence');
+    expect(result).toContain('--sample-content');
+    expect(result).toContain('config-path');
+  });
+
+  it('should list drift in help text', () => {
+    const result = execFileSync('npx', ['tsx', 'src/cli.ts', '--help'], { encoding: 'utf-8' });
+    expect(result).toContain('drift');
+  });
 });

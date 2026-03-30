@@ -12,6 +12,9 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 };
 
 import { buildAuditRecord, writeAuditLog } from './core/audit-logger.js';
+import { applyDriftToConfig } from './core/config-applier.js';
+import { detectDrift, buildSchemaMap } from './core/config-drift.js';
+import type { DriftItem, DriftResult } from './core/config-drift.js';
 import { generateConfig, configToYaml } from './core/config-generator.js';
 import { loadConfig, loadSourceConnection } from './core/config-loader.js';
 import { validateConfigDeep } from './core/config-validator.js';
@@ -304,6 +307,84 @@ program
   });
 
 program
+  .command('drift')
+  .description('Detect schema drift between config and current database PII')
+  .argument('<config-path>', 'Path to shinobidb config file')
+  .option('--schemas <schemas>', 'Comma-separated schema filter')
+  .option('--tables <tables>', 'Comma-separated table filter')
+  .option('--sample-content', 'Sample actual data for PII detection')
+  .option('--min-confidence <value>', 'Minimum confidence threshold', parseFloat, 0.5)
+  .option('--json', 'Output as JSON')
+  .option('--apply', 'Auto-update config with new entries')
+  .action(
+    async (
+      configPath: string,
+      opts: {
+        schemas?: string;
+        tables?: string;
+        sampleContent?: boolean;
+        minConfidence: number;
+        json?: boolean;
+        apply?: boolean;
+      },
+    ) => {
+      const resolvedPath = resolve(configPath);
+      const config = await loadConfig(resolvedPath);
+
+      const connConfig = await resolveConnection({
+        role: 'source',
+        configConnection: config.source,
+      });
+      const adapter = createAdapter(connConfig);
+
+      try {
+        await adapter.connect();
+
+        const detectors = createDefaultDetectors();
+        if (opts.sampleContent) {
+          detectors.push(new ContentDetector(adapter));
+        }
+
+        const scanResult = await scan(adapter, detectors, {
+          schemas: opts.schemas?.split(','),
+          tables: opts.tables?.split(','),
+        });
+
+        const schemas = opts.schemas?.split(',') ?? (await adapter.getSchemas());
+        const schemaMap = await buildSchemaMap(adapter, schemas);
+
+        const driftResult = detectDrift(config, scanResult, schemaMap, {
+          minConfidence: opts.minConfidence,
+        });
+
+        if (
+          opts.apply &&
+          driftResult.items.some(
+            (i) => i.type === 'copyonly_has_pii' || i.type === 'new_pii_column',
+          )
+        ) {
+          const applyResult = await applyDriftToConfig(resolvedPath, driftResult.items);
+          if (!opts.json) {
+            logger.success(`Applied ${applyResult.added} column(s) to ${applyResult.filePath}`);
+          }
+        }
+
+        if (opts.json) {
+          logger.output(JSON.stringify(driftResult, null, 2));
+        } else {
+          formatDriftOutput(driftResult);
+        }
+
+        if (driftResult.hasActionableDrift) {
+          process.exitCode = 1;
+        }
+      } finally {
+        await adapter.destroy();
+      }
+    },
+  );
+
+program
   .command('mask')
   .description('Execute data masking based on config file')
   .option('-c, --config <file>', 'Config file path', 'shinobidb.yaml')
@@ -450,6 +531,60 @@ program
       }
     },
   );
+
+function formatDriftOutput(result: DriftResult): void {
+  logger.output('\nSchema Drift Report');
+  logger.output('===================\n');
+
+  const grouped: Record<string, DriftItem[]> = { critical: [], warning: [], info: [] };
+  for (const item of result.items) {
+    grouped[item.severity]!.push(item);
+  }
+
+  if (grouped.critical!.length > 0) {
+    logger.output(`CRITICAL (${grouped.critical!.length})`);
+    for (const item of grouped.critical!) {
+      logger.output(
+        `  ${item.schema}.${item.table}${item.column ? `.${item.column}` : ''} — ${item.message}`,
+      );
+      if (item.detection) {
+        logger.output(`    Suggested strategy: ${item.detection.suggestedMaskingStrategy}`);
+      }
+    }
+    logger.output('');
+  }
+
+  if (grouped.warning!.length > 0) {
+    logger.output(`WARNING (${grouped.warning!.length})`);
+    for (const item of grouped.warning!) {
+      logger.output(
+        `  ${item.schema}.${item.table}${item.column ? `.${item.column}` : ''} — ${item.message}`,
+      );
+      if (item.detection) {
+        logger.output(`    Suggested strategy: ${item.detection.suggestedMaskingStrategy}`);
+      }
+    }
+    logger.output('');
+  }
+
+  if (grouped.info!.length > 0) {
+    logger.output(`INFO (${grouped.info!.length})`);
+    for (const item of grouped.info!) {
+      logger.output(
+        `  ${item.schema}.${item.table}${item.column ? `.${item.column}` : ''} — ${item.message}`,
+      );
+    }
+    logger.output('');
+  }
+
+  if (result.items.length === 0) {
+    logger.success('No schema drift detected.');
+  } else {
+    logger.output(
+      `Exit code: ${result.hasActionableDrift ? '1 (actionable drift detected)' : '0 (info only)'}`,
+    );
+  }
+}
 
 function formatDryRunOutput(result: DryRunResult): void {
   logger.output(

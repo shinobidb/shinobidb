@@ -33,4 +33,5 @@ export interface ShinobiConfig {
   options: MaskOptions;
   tables: TableMaskConfig[];
   customStrategies?: string[];
+  ignore?: string[];
 }

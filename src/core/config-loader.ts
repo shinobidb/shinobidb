@@ -79,6 +79,7 @@ export function validateConfig(raw: unknown): ShinobiConfig {
   validateOptions(obj.options);
   validateTables(obj.tables);
   validateCustomStrategies(obj.customStrategies);
+  validateIgnoreList(obj.ignore);
 
   return raw as ShinobiConfig;
 }
@@ -216,6 +217,22 @@ function validateCustomStrategies(value: unknown): void {
     if (typeof value[i] !== 'string' || value[i].length === 0) {
       throw new ConfigValidationError(
         `"customStrategies[${i}]" must be a non-empty string (file path)`,
+      );
+    }
+  }
+}
+
+function validateIgnoreList(value: unknown): void {
+  if (value === undefined) return;
+
+  if (!Array.isArray(value)) {
+    throw new ConfigValidationError('"ignore" must be an array of strings');
+  }
+
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== 'string' || (value[i] as string).length === 0) {
+      throw new ConfigValidationError(
+        `"ignore[${i}]" must be a non-empty string (format: schema.table.column)`,
       );
     }
   }
