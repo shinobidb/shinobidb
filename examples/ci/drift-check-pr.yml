@@ -1,0 +1,107 @@
+# shinobidb drift detection — PR comment example
+#
+# Posts drift results as a PR comment when config files change.
+# Useful for catching config/schema mismatches before merge.
+#
+# NOTE: Requires network access to the source database from the runner.
+#       Use self-hosted runners if the DB is not publicly accessible.
+#
+# Required secrets:
+#   SOURCE_DATABASE_URI — connection string for the source DB
+#
+# Required permissions:
+#   pull-requests: write  (for posting comments)
+
+name: Drift Check (PR)
+
+on:
+  pull_request:
+    paths:
+      - 'shinobidb.yaml'
+      - 'shinobidb.yml'
+
+permissions:
+  pull-requests: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run drift detection
+        id: drift
+        continue-on-error: true
+        env:
+          SOURCE_DATABASE_URI: ${{ secrets.SOURCE_DATABASE_URI }}
+        run: |
+          npx shinobidb drift shinobidb.yaml \
+            --json \
+            --min-confidence 0.6 \
+            > drift-report.json 2>&1
+
+      - name: Post PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('drift-report.json', 'utf8'));
+
+            const items = report.items || [];
+            const critical = items.filter(i => i.severity === 'critical');
+            const warning = items.filter(i => i.severity === 'warning');
+            const info = items.filter(i => i.severity === 'info');
+
+            let body = '## shinobidb Drift Report\n\n';
+
+            if (items.length === 0) {
+              body += '✅ No schema drift detected.\n';
+            } else {
+              body += `| Severity | Count |\n|----------|-------|\n`;
+              if (critical.length) body += `| 🔴 Critical | ${critical.length} |\n`;
+              if (warning.length) body += `| 🟡 Warning | ${warning.length} |\n`;
+              if (info.length) body += `| 🔵 Info | ${info.length} |\n`;
+
+              body += '\n### Details\n\n';
+              for (const item of items) {
+                const icon = item.severity === 'critical' ? '🔴'
+                  : item.severity === 'warning' ? '🟡' : '🔵';
+                const loc = `${item.schema}.${item.table}${item.column ? '.' + item.column : ''}`;
+                body += `- ${icon} **${loc}** — ${item.message}\n`;
+              }
+            }
+
+            // Find and update existing comment, or create new one
+            const marker = '<!-- shinobidb-drift -->';
+            body = marker + '\n' + body;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

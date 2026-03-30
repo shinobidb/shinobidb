@@ -176,6 +176,37 @@ shinobidb scan ... --snapshot --diff
 
 The diff output shows new, removed, and changed PII columns. Exit code is 1 when changes are detected, making it easy to integrate into CI pipelines.
 
+### `shinobidb drift`
+
+Detect drift between your masking config and the current database schema. Finds new PII columns not covered by your config, tables/columns that no longer exist in the database, and `copy_only` tables that contain PII.
+
+```bash
+shinobidb drift <config-path> \
+  [--schemas <s1,s2>] [--tables <t1,t2>] \
+  [--sample-content] [--min-confidence <0.6>] \
+  [--json] [--apply]
+```
+
+| Option             | Description                                     |
+| ------------------ | ----------------------------------------------- |
+| `--json`           | Output as JSON (for CI integration)             |
+| `--apply`          | Auto-update config with newly detected entries  |
+| `--min-confidence` | Minimum PII confidence threshold (default: 0.5) |
+| `--sample-content` | Sample actual row data for PII detection        |
+
+Exit code is 1 when actionable drift (critical or warning) is detected. Use the `ignore` field in your config to suppress known false positives:
+
+```yaml
+ignore:
+  - mydb.users.display_name
+  - mydb.logs.user_agent
+```
+
+**CI Integration:** Sample GitHub Actions workflows are available in [`examples/ci/`](examples/ci/):
+
+- [`drift-check.yml`](examples/ci/drift-check.yml) — Scheduled drift detection with Slack notifications
+- [`drift-check-pr.yml`](examples/ci/drift-check-pr.yml) — Post drift results as a PR comment when config changes
+
 ### `shinobidb validate`
 
 Validate a config file without connecting to any database. Checks for unknown strategies, duplicate tables/columns, incremental column conflicts, and more.

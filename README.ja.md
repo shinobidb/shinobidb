@@ -153,6 +153,37 @@ shinobidb mask \
 | `--full-refresh`     | 増分同期テーブルの同期状態をリセットしてフルコピーを強制                                       |
 | `--no-progress`      | プログレスバーを無効化                                                                         |
 
+### `shinobidb drift`
+
+マスキング設定と現在のDBスキーマのドリフト（乖離）を検出します。設定に未定義のPIIカラム、DBに存在しないテーブル/カラム、PIIを含む`copy_only`テーブルを発見します。
+
+```bash
+shinobidb drift <config-path> \
+  [--schemas <s1,s2>] [--tables <t1,t2>] \
+  [--sample-content] [--min-confidence <0.6>] \
+  [--json] [--apply]
+```
+
+| オプション         | 説明                                   |
+| ------------------ | -------------------------------------- |
+| `--json`           | JSON出力（CI連携用）                   |
+| `--apply`          | 検出結果で設定ファイルを自動更新       |
+| `--min-confidence` | PII検出の最小信頼度（デフォルト: 0.5） |
+| `--sample-content` | 実データをサンプリングしてPII検出      |
+
+アクション可能なドリフト（critical/warning）検出時は終了コード1。既知の誤検知は`ignore`フィールドで除外:
+
+```yaml
+ignore:
+  - mydb.users.display_name
+  - mydb.logs.user_agent
+```
+
+**CI連携:** GitHub Actionsのサンプルワークフローを[`examples/ci/`](examples/ci/)に用意しています:
+
+- [`drift-check.yml`](examples/ci/drift-check.yml) — 定期drift検出 + Slack通知
+- [`drift-check-pr.yml`](examples/ci/drift-check-pr.yml) — PR変更時にdrift結果をコメント投稿
+
 ### `shinobidb validate`
 
 DBに接続せずに設定ファイルの妥当性を検証します。未知の戦略名、テーブル/カラムの重複、増分同期カラムの競合などをチェックします。

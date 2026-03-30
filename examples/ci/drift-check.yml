@@ -1,0 +1,98 @@
+# shinobidb drift detection — GitHub Actions example
+#
+# Runs `shinobidb drift` on a schedule and notifies Slack when
+# actionable drift is detected (exit code 1).
+#
+# Required secrets:
+#   SOURCE_DATABASE_URI  — connection string for the source DB
+#   SLACK_WEBHOOK_URL    — Slack Incoming Webhook URL
+#
+# Required file:
+#   shinobidb.yaml — masking config committed to the repo
+#
+# Usage:
+#   Copy this file to .github/workflows/drift-check.yml in your repo.
+#   Adjust the cron schedule, config path, and Node version as needed.
+
+name: Drift Check
+
+on:
+  schedule:
+    # Every weekday at 09:00 UTC
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run drift detection
+        id: drift
+        continue-on-error: true
+        env:
+          SOURCE_DATABASE_URI: ${{ secrets.SOURCE_DATABASE_URI }}
+        run: |
+          npx shinobidb drift shinobidb.yaml \
+            --json \
+            --min-confidence 0.6 \
+            > drift-report.json 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-report
+          path: drift-report.json
+          retention-days: 30
+
+      - name: Notify Slack on drift
+        if: steps.drift.outcome == 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          ITEMS=$(jq '.items | length' drift-report.json)
+          CRITICAL=$(jq '[.items[] | select(.severity == "critical")] | length' drift-report.json)
+          WARNING=$(jq '[.items[] | select(.severity == "warning")] | length' drift-report.json)
+
+          curl -sSf -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n \
+              --arg items "$ITEMS" \
+              --arg critical "$CRITICAL" \
+              --arg warning "$WARNING" \
+              --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              '{
+                text: "⚠️ shinobidb drift detected",
+                blocks: [
+                  {
+                    type: "section",
+                    text: {
+                      type: "mrkdwn",
+                      text: ("*Schema drift detected*\n"
+                        + "• Critical: " + $critical + "\n"
+                        + "• Warning: " + $warning + "\n"
+                        + "• Total items: " + $items)
+                    }
+                  },
+                  {
+                    type: "actions",
+                    elements: [
+                      {
+                        type: "button",
+                        text: { type: "plain_text", text: "View Run" },
+                        url: $url
+                      }
+                    ]
+                  }
+                ]
+              }')"
