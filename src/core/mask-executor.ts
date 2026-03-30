@@ -505,15 +505,18 @@ async function processTable(
   });
 }
 
-function deserializeCursorValue(
+/** @internal Exported for testing */
+export function deserializeCursorValue(
   cursor: string,
   strategy: 'timestamp' | 'cursor',
 ): string | number | Date {
   if (strategy === 'cursor') {
     return Number(cursor);
   }
-  // For timestamp strategy, try to parse back to Date for DB adapters
-  // that require native Date objects (e.g. MongoDB)
+  // For timestamp strategy, parse back to Date for DB adapters
+  // that require native Date objects (e.g. MongoDB).
+  // Handles both ISO 8601 UTC ("2026-03-30T12:00:00.000Z") and
+  // legacy local-time format ("2026-03-30 21:00:00") for backward compatibility.
   const parsed = new Date(cursor);
   if (!isNaN(parsed.getTime())) {
     return parsed;
@@ -521,15 +524,13 @@ function deserializeCursorValue(
   return cursor;
 }
 
-function serializeCursor(value: unknown): string {
+/** @internal Exported for testing */
+export function serializeCursor(value: unknown): string {
   if (value instanceof Date) {
-    // Use local timezone format (YYYY-MM-DD HH:MM:SS) so the value can be
-    // passed back to the DB as a filter parameter without timezone mismatch.
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return (
-      `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
-      `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`
-    );
+    // Store as ISO 8601 UTC to avoid timezone-dependent behavior.
+    // DB adapters receive a Date object from deserializeCursorValue,
+    // so the driver handles timezone conversion to the DB's session timezone.
+    return value.toISOString();
   }
   return String(value);
 }

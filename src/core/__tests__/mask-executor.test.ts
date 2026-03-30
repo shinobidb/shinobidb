@@ -1,7 +1,12 @@
 import type { ShinobiConfig } from '../../config/types.js';
 import type { ColumnInfo, DatabaseAdapter } from '../../db/types.js';
 import { createDefaultRegistry } from '../../masking/strategy-registry.js';
-import { executeMask, executeDryRun } from '../mask-executor.js';
+import {
+  executeMask,
+  executeDryRun,
+  serializeCursor,
+  deserializeCursorValue,
+} from '../mask-executor.js';
 import * as syncStateModule from '../sync-state.js';
 
 function createMockAdapter(rows: Record<string, unknown>[][] = []): DatabaseAdapter {
@@ -1008,5 +1013,59 @@ describe('executeMask incremental sync', () => {
     await executeMask(source, target, config, registry);
 
     expect(syncStateModule.saveSyncState).not.toHaveBeenCalled();
+  });
+});
+
+describe('serializeCursor', () => {
+  it('should serialize Date to ISO 8601 UTC string', () => {
+    const date = new Date('2026-03-30T12:00:00.000Z');
+    expect(serializeCursor(date)).toBe('2026-03-30T12:00:00.000Z');
+  });
+
+  it('should serialize number to string', () => {
+    expect(serializeCursor(42)).toBe('42');
+  });
+
+  it('should serialize string as-is', () => {
+    expect(serializeCursor('some-value')).toBe('some-value');
+  });
+
+  it('should produce timezone-independent output for Date', () => {
+    // Regardless of local timezone, the same Date always produces the same string
+    const date = new Date('2026-03-30T03:00:00.000Z');
+    const serialized = serializeCursor(date);
+    expect(serialized).toBe('2026-03-30T03:00:00.000Z');
+    expect(serialized).toContain('Z'); // Always UTC
+  });
+});
+
+describe('deserializeCursorValue', () => {
+  it('should deserialize cursor strategy as number', () => {
+    expect(deserializeCursorValue('42', 'cursor')).toBe(42);
+  });
+
+  it('should deserialize ISO 8601 UTC timestamp to Date', () => {
+    const result = deserializeCursorValue('2026-03-30T12:00:00.000Z', 'timestamp');
+    expect(result).toBeInstanceOf(Date);
+    expect((result as Date).toISOString()).toBe('2026-03-30T12:00:00.000Z');
+  });
+
+  it('should handle legacy local-time format (backward compat)', () => {
+    // Legacy format: "2026-03-30 21:00:00" (no timezone indicator)
+    const result = deserializeCursorValue('2026-03-30 21:00:00', 'timestamp');
+    expect(result).toBeInstanceOf(Date);
+    expect(isNaN((result as Date).getTime())).toBe(false);
+  });
+
+  it('should round-trip serialize/deserialize without drift', () => {
+    const original = new Date('2026-03-30T12:34:56.789Z');
+    const serialized = serializeCursor(original);
+    const deserialized = deserializeCursorValue(serialized, 'timestamp');
+    expect(deserialized).toBeInstanceOf(Date);
+    expect((deserialized as Date).getTime()).toBe(original.getTime());
+  });
+
+  it('should return string for unparseable timestamp', () => {
+    expect(deserializeCursorValue('not-a-date', 'timestamp')).toBe('not-a-date');
   });
 });
