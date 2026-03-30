@@ -313,7 +313,12 @@ program
   .option('--sample-rows <n>', 'Number of sample rows for dry-run (0 for all)', parseInt)
   .option('--json', 'Output dry-run results as JSON')
   .option('--sync-schema', 'Auto-create missing tables in target from source schema')
-  .option('--concurrency <n>', 'Number of tables to process in parallel', parseInt, 1)
+  .option(
+    '--concurrency <n>',
+    'Number of tables to process in parallel',
+    (v: string) => parseInt(v, 10),
+    1,
+  )
   .option('--full-refresh', 'Force full copy for incremental tables, resetting sync state')
   .option('--no-progress', 'Disable progress bar')
   .option('--audit-log <file>', 'Write audit log to file (JSON or CSV based on extension)')
@@ -498,7 +503,11 @@ program.parseAsync().catch((err: unknown) => {
   }
 
   if (getLogLevel() === 'debug' && err instanceof Error && err.stack) {
-    logger.debug(err.stack);
+    // Redact credentials from stack traces (URI passwords, connection string passwords)
+    const sanitized = err.stack
+      .replace(/:\/\/([^:]+):([^@]+)@/g, '://$1:[REDACTED]@')
+      .replace(/password[=:]\s*\S+/gi, 'password=[REDACTED]');
+    logger.debug(sanitized);
   }
 
   process.exitCode = 1;

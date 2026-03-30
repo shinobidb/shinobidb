@@ -3,7 +3,14 @@ import mysql, { type Pool, type PoolOptions } from 'mysql2/promise';
 import { DatabaseConnectionError, DatabaseQueryError } from '../../shared/errors.js';
 import { logger } from '../../shared/logger.js';
 import type { DatabaseConnectionConfig } from '../../shared/types.js';
-import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo, ReadFilter } from '../types.js';
+import {
+  assertValidFilterOperator,
+  validateDefaultValue,
+  type ColumnInfo,
+  type DatabaseAdapter,
+  type ForeignKeyInfo,
+  type ReadFilter,
+} from '../types.js';
 
 export class MySQLAdapter implements DatabaseAdapter {
   private pool: Pool | null = null;
@@ -154,6 +161,7 @@ export class MySQLAdapter implements DatabaseAdapter {
         let params: unknown[];
 
         if (filter) {
+          assertValidFilterOperator(filter.operator);
           sql = `SELECT * FROM ${identifier} WHERE \`${filter.column}\` ${filter.operator} ? ORDER BY \`${filter.column}\` ASC LIMIT ? OFFSET ?`;
           params = [filter.value, batchSize, offset];
         } else {
@@ -275,7 +283,13 @@ export class MySQLAdapter implements DatabaseAdapter {
       const columnDefs = columns.map((col) => {
         const parts = [`\`${col.name}\``, col.dataType];
         if (!col.nullable) parts.push('NOT NULL');
-        if (col.defaultValue !== null) parts.push(`DEFAULT ${col.defaultValue}`);
+        if (col.defaultValue !== null) {
+          if (validateDefaultValue(col.defaultValue)) {
+            parts.push(`DEFAULT ${formatMySQLDefault(col.defaultValue, col.dataType)}`);
+          } else {
+            logger.warn(`Skipping suspicious DEFAULT value for ${schema}.${table}.${col.name}`);
+          }
+        }
         return parts.join(' ');
       });
 
@@ -319,4 +333,36 @@ export class MySQLAdapter implements DatabaseAdapter {
     );
     return new Set(rows.map((row) => row['COLUMN_NAME'] as string));
   }
+}
+
+/**
+ * MySQL INFORMATION_SCHEMA returns string DEFAULT values unquoted (e.g. 'active' → active).
+ * This function re-quotes them for use in CREATE TABLE DDL.
+ */
+const MYSQL_STRING_TYPE_PATTERN = /^(varchar|char|text|tinytext|mediumtext|longtext|enum|set)/i;
+const MYSQL_SQL_KEYWORD_PATTERN = /^(NULL|CURRENT_TIMESTAMP|TRUE|FALSE|NOW\(\)|UUID\(\))/i;
+
+function isNumericLiteral(value: string): boolean {
+  const v = value.startsWith('-') ? value.slice(1) : value;
+  if (v.length === 0) return false;
+  const dotIndex = v.indexOf('.');
+  const intPart = dotIndex === -1 ? v : v.slice(0, dotIndex);
+  const decPart = dotIndex === -1 ? '' : v.slice(dotIndex + 1);
+  if (intPart.length === 0 || !/^\d+$/.test(intPart)) return false;
+  if (decPart.length > 0 && !/^\d+$/.test(decPart)) return false;
+  return true;
+}
+
+function formatMySQLDefault(value: string, dataType: string): string {
+  // Parenthesized expressions (e.g. (uuid())) are already valid SQL
+  if (value.startsWith('(')) return value;
+  // SQL keywords and functions don't need quoting
+  if (MYSQL_SQL_KEYWORD_PATTERN.test(value)) return value;
+  // Numeric types don't need quoting
+  if (isNumericLiteral(value)) return value;
+  // String-type columns need their defaults quoted
+  if (MYSQL_STRING_TYPE_PATTERN.test(dataType)) {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+  return value;
 }

@@ -19,7 +19,7 @@ export function parseUri(uri: string): DatabaseConnectionConfig {
   try {
     url = new URL(uri);
   } catch {
-    throw new Error(`Invalid connection URI: ${uri}`);
+    throw new Error('Invalid connection URI format');
   }
 
   const scheme = url.protocol.replace(/:$/, '');

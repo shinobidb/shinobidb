@@ -28,6 +28,8 @@ npx shinobidb --help
 
 ## クイックスタート
 
+### MySQL
+
 ```bash
 # 1. ソースDBをスキャンしてPIIカラムを検出
 shinobidb scan --host localhost --port 3306 --user root --password secret --schemas mydb
@@ -35,17 +37,38 @@ shinobidb scan --host localhost --port 3306 --user root --password secret --sche
 # 2. スキャン結果からマスキング設定を生成
 shinobidb config --host localhost --port 3306 --user root --password secret --schemas mydb -o shinobidb.yaml
 
-# 3. shinobidb.yaml を編集（ターゲット接続先の設定、マスキングルールの確認）
+# 3. shinobidb.yaml を編集 — ターゲット接続先を設定
+#    生成ファイルの <TARGET_HOST>, <TARGET_PASSWORD> 等のプレースホルダーを実際の値に置換
 
-# 4. マスキング実行
+# 4. マスキング実行（パスワードを省略すると対話プロンプトで入力）
 shinobidb mask --source-password secret --target-password secret
 ```
+
+### PostgreSQL
+
+```bash
+shinobidb scan --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public
+shinobidb config --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public -o shinobidb.yaml
+# shinobidb.yaml を編集後:
+shinobidb mask --source-password secret --target-password secret
+```
+
+### MongoDB
+
+```bash
+shinobidb scan --type mongodb --host localhost --port 27017 --user admin --database mydb
+shinobidb config --type mongodb --host localhost --port 27017 --user admin --database mydb -o shinobidb.yaml
+# shinobidb.yaml を編集後:
+shinobidb mask --source-password secret --target-password secret
+```
+
+> **Note:** `--type` のデフォルトは `mysql` です。PostgreSQL/MongoDBの場合は必ず `--type` を指定してください。
 
 ## CLIコマンド
 
 ### 接続オプション
 
-DB接続が必要なコマンドは、個別フラグまたは接続URIのどちらでも指定可能:
+DB接続が必要なコマンドは、個別フラグ、接続URI、または環境変数で指定可能:
 
 ```bash
 # 個別フラグ
@@ -55,7 +78,22 @@ shinobidb scan --host localhost --port 3306 --user root --password secret --sche
 shinobidb scan --uri mysql://root:secret@localhost:3306/mydb
 shinobidb scan --uri postgres://user:pass@localhost:5432/mydb
 shinobidb scan --uri mongodb://user:pass@localhost:27017/mydb
+
+# 環境変数（CI/CD・本番環境推奨）
+export SHINOBIDB_SOURCE_HOST=localhost
+export SHINOBIDB_SOURCE_PORT=3306
+export SHINOBIDB_SOURCE_USER=root
+export SHINOBIDB_SOURCE_PASSWORD=secret
+export SHINOBIDB_SOURCE_DATABASE=mydb
+export SHINOBIDB_SOURCE_TYPE=mysql    # mysql, postgres, mongodb
+shinobidb scan --schemas mydb
 ```
+
+`mask`コマンドのターゲット接続には `SHINOBIDB_TARGET_*` プレフィックスを使用（キーは同一: `HOST`, `PORT`, `USER`, `PASSWORD`, `DATABASE`, `TYPE`, `URI`）。
+
+**パスワード解決の優先順位:** CLIフラグ > 環境変数 > 設定ファイル > 対話プロンプト。パスワードを省略すると対話的に入力を求められます。
+
+> **セキュリティ:** 本番環境では `--password` 等のCLIフラグでパスワードを渡すことを避けてください（`ps`コマンドで他のプロセスから見えます）。環境変数または対話プロンプトを推奨します。
 
 ### `shinobidb scan`
 
@@ -68,6 +106,12 @@ shinobidb scan \
   [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
   [--sample-content] [--json]
 ```
+
+**`--database` と `--schemas` の使い分け:**
+
+- **MySQL** — `--schemas` でスキャン対象のデータベースを指定（MySQLではスキーマ＝データベース）。`--database` は省略可。
+- **PostgreSQL** — `--database` で接続先データベースを指定、`--schemas` でスキーマ名を指定（例: `public`）。
+- **MongoDB** — `--database` でデータベースを指定。`--schemas` は不要。
 
 `--sample-content` を指定すると、実データのサンプルからもPIIを検出します（メール、電話番号、IPアドレス、クレジットカード番号、SSN）。カラム名検出とコンテンツ検出の両方がヒットした場合、信頼度の高い方が採用されます。
 
@@ -96,7 +140,7 @@ shinobidb mask \
   [--audit-log <file>] [--full-refresh] [--no-progress]
 ```
 
-パスワードはCLIフラグで渡します（設定ファイルには保存されません）。
+パスワードは設定ファイルに保存されません。CLIフラグ、環境変数（`SHINOBIDB_SOURCE_PASSWORD` / `SHINOBIDB_TARGET_PASSWORD`）、または省略して対話プロンプトで入力できます。設定ファイルのデフォルトパスは `shinobidb.yaml`（カレントディレクトリ）。
 
 | オプション           | 説明                                                                                           |
 | -------------------- | ---------------------------------------------------------------------------------------------- |
@@ -172,6 +216,12 @@ tables:
       - name: phone
         strategy: fake_phone
 ```
+
+**主要オプション:**
+
+- `truncateTarget: true` — コピー前にターゲットテーブルの**既存データをすべて削除**します。`false`にすると追記モード。
+- `deterministic: true` — 同じ入力は常に同じマスク結果を生成（参照整合性の維持に有用）。
+- `batchSize` — バッチあたりの処理行数（デフォルト: 1000）。
 
 ### コピー専用テーブル
 

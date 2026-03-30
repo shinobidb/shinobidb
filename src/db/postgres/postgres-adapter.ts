@@ -3,7 +3,14 @@ import pg from 'pg';
 import { DatabaseConnectionError, DatabaseQueryError } from '../../shared/errors.js';
 import { logger } from '../../shared/logger.js';
 import type { DatabaseConnectionConfig } from '../../shared/types.js';
-import type { ColumnInfo, DatabaseAdapter, ForeignKeyInfo, ReadFilter } from '../types.js';
+import {
+  assertValidFilterOperator,
+  validateDefaultValue,
+  type ColumnInfo,
+  type DatabaseAdapter,
+  type ForeignKeyInfo,
+  type ReadFilter,
+} from '../types.js';
 
 export class PostgresAdapter implements DatabaseAdapter {
   private pool: pg.Pool | null = null;
@@ -172,6 +179,7 @@ export class PostgresAdapter implements DatabaseAdapter {
         let params: unknown[];
 
         if (filter) {
+          assertValidFilterOperator(filter.operator);
           sql = `SELECT * FROM ${identifier} WHERE "${filter.column}" ${filter.operator} $1 ORDER BY "${filter.column}" ASC LIMIT $2 OFFSET $3`;
           params = [filter.value, batchSize, offset];
         } else {
@@ -313,7 +321,13 @@ export class PostgresAdapter implements DatabaseAdapter {
 
         const parts = [`"${col.name}"`, col.dataType];
         if (!col.nullable) parts.push('NOT NULL');
-        if (col.defaultValue !== null) parts.push(`DEFAULT ${col.defaultValue}`);
+        if (col.defaultValue !== null) {
+          if (validateDefaultValue(col.defaultValue)) {
+            parts.push(`DEFAULT ${col.defaultValue}`);
+          } else {
+            logger.warn(`Skipping suspicious DEFAULT value for ${schema}.${table}.${col.name}`);
+          }
+        }
         return parts.join(' ');
       });
 

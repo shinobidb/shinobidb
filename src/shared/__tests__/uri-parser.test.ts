@@ -70,8 +70,14 @@ describe('parseUri', () => {
     expect(result.password).toBe('p@ss#word');
   });
 
-  it('should throw for invalid URI', () => {
-    expect(() => parseUri('not-a-uri')).toThrow('Invalid connection URI');
+  it('should throw for invalid URI without exposing the URI', () => {
+    expect(() => parseUri('not-a-uri')).toThrow('Invalid connection URI format');
+    // Ensure the password is NOT included in the error message
+    try {
+      parseUri('not://valid:s3cretP@ss@uri');
+    } catch (e) {
+      expect((e as Error).message).not.toContain('s3cretP@ss');
+    }
   });
 
   it('should throw for unsupported scheme', () => {

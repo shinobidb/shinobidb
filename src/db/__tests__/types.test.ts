@@ -1,9 +1,11 @@
-import type {
-  ColumnInfo,
-  DatabaseAdapter,
-  ForeignKeyInfo,
-  ReadFilter,
-  TableInfo,
+import {
+  assertValidFilterOperator,
+  validateDefaultValue,
+  type ColumnInfo,
+  type DatabaseAdapter,
+  type ForeignKeyInfo,
+  type ReadFilter,
+  type TableInfo,
 } from '../types.js';
 
 describe('db types', () => {
@@ -101,5 +103,47 @@ describe('db types', () => {
     };
 
     expect(filter.value).toBeInstanceOf(Date);
+  });
+});
+
+describe('validateDefaultValue', () => {
+  it('should accept safe default values', () => {
+    expect(validateDefaultValue('NULL')).toBe(true);
+    expect(validateDefaultValue('0')).toBe(true);
+    expect(validateDefaultValue('3.14')).toBe(true);
+    expect(validateDefaultValue("'hello'")).toBe(true);
+    expect(validateDefaultValue("''")).toBe(true);
+    expect(validateDefaultValue('CURRENT_TIMESTAMP')).toBe(true);
+    expect(validateDefaultValue('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')).toBe(true);
+    expect(validateDefaultValue('TRUE')).toBe(true);
+    expect(validateDefaultValue('FALSE')).toBe(true);
+    expect(validateDefaultValue('gen_random_uuid()')).toBe(true);
+    expect(validateDefaultValue("nextval('users_id_seq'::regclass)")).toBe(true);
+    expect(validateDefaultValue("'value'::text")).toBe(true);
+  });
+
+  it('should reject values with semicolons (statement separator)', () => {
+    expect(validateDefaultValue('0; DROP TABLE users')).toBe(false);
+    expect(validateDefaultValue("''; DELETE FROM users;")).toBe(false);
+  });
+
+  it('should reject values with SQL comments', () => {
+    expect(validateDefaultValue('0 -- malicious comment')).toBe(false);
+    expect(validateDefaultValue('0 /* block comment */')).toBe(false);
+    expect(validateDefaultValue('/* start */ 0')).toBe(false);
+  });
+});
+
+describe('assertValidFilterOperator', () => {
+  it('should accept valid operators', () => {
+    expect(() => assertValidFilterOperator('>')).not.toThrow();
+    expect(() => assertValidFilterOperator('>=')).not.toThrow();
+  });
+
+  it('should reject invalid operators', () => {
+    expect(() => assertValidFilterOperator('>= 1 OR 1=1')).toThrow('Invalid filter operator');
+    expect(() => assertValidFilterOperator('< 1; DROP TABLE')).toThrow('Invalid filter operator');
+    expect(() => assertValidFilterOperator('')).toThrow('Invalid filter operator');
+    expect(() => assertValidFilterOperator('<')).toThrow('Invalid filter operator');
   });
 });

@@ -28,6 +28,8 @@ npx shinobidb --help
 
 ## Quick Start
 
+### MySQL
+
 ```bash
 # 1. Scan source database for PII columns
 shinobidb scan --host localhost --port 3306 --user root --password secret --schemas mydb
@@ -35,17 +37,38 @@ shinobidb scan --host localhost --port 3306 --user root --password secret --sche
 # 2. Generate masking config from scan results
 shinobidb config --host localhost --port 3306 --user root --password secret --schemas mydb -o shinobidb.yaml
 
-# 3. Edit shinobidb.yaml to set target connection and review masking rules
+# 3. Edit shinobidb.yaml — set the target connection (host, port, user, database)
+#    The generated file has <TARGET_HOST>, <TARGET_PASSWORD> etc. as placeholders
 
-# 4. Run masking
+# 4. Run masking (passwords are prompted interactively if omitted)
 shinobidb mask --source-password secret --target-password secret
 ```
+
+### PostgreSQL
+
+```bash
+shinobidb scan --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public
+shinobidb config --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public -o shinobidb.yaml
+# Edit shinobidb.yaml, then:
+shinobidb mask --source-password secret --target-password secret
+```
+
+### MongoDB
+
+```bash
+shinobidb scan --type mongodb --host localhost --port 27017 --user admin --database mydb
+shinobidb config --type mongodb --host localhost --port 27017 --user admin --database mydb -o shinobidb.yaml
+# Edit shinobidb.yaml, then:
+shinobidb mask --source-password secret --target-password secret
+```
+
+> **Note:** `--type` defaults to `mysql` when not specified. For PostgreSQL and MongoDB, always pass `--type`.
 
 ## CLI Commands
 
 ### Connection Options
 
-All commands that connect to a database accept either individual flags or a connection URI:
+All commands that connect to a database accept individual flags, a connection URI, or environment variables:
 
 ```bash
 # Individual flags
@@ -55,7 +78,22 @@ shinobidb scan --host localhost --port 3306 --user root --password secret --sche
 shinobidb scan --uri mysql://root:secret@localhost:3306/mydb
 shinobidb scan --uri postgres://user:pass@localhost:5432/mydb
 shinobidb scan --uri mongodb://user:pass@localhost:27017/mydb
+
+# Environment variables (recommended for CI/CD and production)
+export SHINOBIDB_SOURCE_HOST=localhost
+export SHINOBIDB_SOURCE_PORT=3306
+export SHINOBIDB_SOURCE_USER=root
+export SHINOBIDB_SOURCE_PASSWORD=secret
+export SHINOBIDB_SOURCE_DATABASE=mydb
+export SHINOBIDB_SOURCE_TYPE=mysql    # mysql, postgres, or mongodb
+shinobidb scan --schemas mydb
 ```
+
+For `mask`, target connection uses the `SHINOBIDB_TARGET_*` prefix (same keys: `HOST`, `PORT`, `USER`, `PASSWORD`, `DATABASE`, `TYPE`, `URI`).
+
+**Password resolution order:** CLI flag > environment variable > config file > interactive prompt. If no password is provided, you will be prompted interactively.
+
+> **Security:** Avoid passing passwords via CLI flags (`--password`, `--source-password`, `--target-password`) in production — they are visible to other processes via `ps`. Use environment variables or the interactive prompt instead.
 
 ### `shinobidb scan`
 
@@ -70,6 +108,12 @@ shinobidb scan \
 ```
 
 Output includes detected columns with category, confidence score, and suggested masking strategy.
+
+**`--database` vs `--schemas`:**
+
+- **MySQL** — `--schemas` specifies databases to scan (MySQL treats schemas and databases as the same thing). `--database` is optional.
+- **PostgreSQL** — `--database` specifies which database to connect to, `--schemas` specifies schema names within it (e.g. `public`).
+- **MongoDB** — `--database` specifies the database. `--schemas` is not used.
 
 Use `--sample-content` to also sample actual row data and detect PII by content patterns (emails, phone numbers, IPs, credit card numbers, SSNs). When both column name and content detectors match the same column, the higher-confidence result is kept.
 
@@ -98,7 +142,7 @@ shinobidb mask \
   [--audit-log <file>] [--full-refresh] [--no-progress]
 ```
 
-Passwords are passed via CLI flags (not stored in the config file).
+Passwords are not stored in the config file. Pass them via CLI flags, environment variables (`SHINOBIDB_SOURCE_PASSWORD` / `SHINOBIDB_TARGET_PASSWORD`), or omit them to be prompted interactively. Config file defaults to `shinobidb.yaml` in the current directory.
 
 | Option               | Description                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------------ |
@@ -186,6 +230,12 @@ tables:
       - name: notes
         strategy: scrub_text
 ```
+
+**Key options:**
+
+- `truncateTarget: true` — **Deletes all existing data** in each target table before copying. Set to `false` to append instead.
+- `deterministic: true` — Same input always produces the same masked output (useful for referential integrity).
+- `batchSize` — Number of rows processed per batch (default: 1000).
 
 ### Copy-Only Tables
 

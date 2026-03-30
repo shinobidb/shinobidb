@@ -30,6 +30,28 @@ export interface ReadFilter {
   orderBy: 'ASC';
 }
 
+const DANGEROUS_DEFAULT_PATTERN = /;|--|\*\/|\/\*/;
+
+/**
+ * Validate a column DEFAULT value before interpolating into DDL.
+ * Rejects values containing SQL statement separators or comment syntax.
+ */
+export function validateDefaultValue(value: string): boolean {
+  return !DANGEROUS_DEFAULT_PATTERN.test(value);
+}
+
+const VALID_FILTER_OPERATORS = new Set(['>', '>=']);
+
+/**
+ * Runtime assertion that a filter operator is one of the allowed values.
+ * Prevents injection even if TypeScript type narrowing is bypassed at runtime.
+ */
+export function assertValidFilterOperator(operator: string): asserts operator is '>' | '>=' {
+  if (!VALID_FILTER_OPERATORS.has(operator)) {
+    throw new Error(`Invalid filter operator: ${operator}`);
+  }
+}
+
 export interface DatabaseAdapter {
   connect(): Promise<void>;
 
