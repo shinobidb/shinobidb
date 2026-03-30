@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-03-30
+
 ### Added
 
 - `validate` command — check config files for errors and warnings without connecting to a database
@@ -15,7 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Incremental sync (row-level) with timestamp/cursor strategies and upsert writes
 - Audit log output (`--audit-log`) in JSON/CSV format
 - Progress bar and parallel table processing (`--concurrency`)
-- Agent integration section in roadmap (MCP Server, AI config generation)
+- Schema sync (`--sync-schema`) — auto-create missing tables in target from source
+- Connection URI support (`--uri`) for MySQL, PostgreSQL, MongoDB
+- Content-based PII detection (`--sample-content`) — emails, phones, IPs, credit cards, SSNs
+- Environment variable support (`SHINOBIDB_SOURCE_*` / `SHINOBIDB_TARGET_*`)
+- Config file connection and interactive password prompt
+- Dry-run mode (`--dry-run`) with before/after sample rows
+- Copy-only tables (`copyOnly: true`)
+- Schema change detection with snapshots (`--snapshot`, `--diff`)
+- Japanese documentation (README.ja.md)
+- Large-scale benchmark script (1M rows, 50 tables)
+
+### Fixed
+
+- SQL injection prevention for DEFAULT values in CREATE TABLE (MySQL/PostgreSQL)
+- Runtime validation for filter operators in incremental sync queries
+- Credential leakage in URI parse error messages and debug stack traces
+- MySQL string DEFAULT values now properly quoted in schema sync
+- `--concurrency` flag parsing (Commander parseInt radix issue)
+- Timezone-independent cursor serialization in incremental sync (ISO 8601 UTC)
+
+### Security
+
+- npm audit: 0 vulnerabilities
+- All SQL values use parameterized queries
+- Passwords excluded from audit logs and sync-state fingerprints
+- Password security warning added to documentation
 
 ## [0.3.1] - 2025-05-17
 
@@ -55,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deterministic masking with seed support
 - `scrub_text` strategy for free-text PII removal
 
-[Unreleased]: https://github.com/shinobidb/shinobidb/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/shinobidb/shinobidb/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/shinobidb/shinobidb/compare/v0.3.1...v1.0.0
 [0.3.1]: https://github.com/shinobidb/shinobidb/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/shinobidb/shinobidb/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/shinobidb/shinobidb/compare/v0.1.0...v0.2.0
