@@ -47,6 +47,7 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:e2e": "jest --config jest.e2e.config.js --runInBand",
+    "test:dogfood": "NODE_OPTIONS='--experimental-vm-modules' jest --config jest.dogfood.config.js --runInBand",
     "release:patch": "npm version patch && git push && git push --tags",
     "release:minor": "npm version minor && git push && git push --tags",
     "release:major": "npm version major && git push && git push --tags",
@@ -63,6 +64,7 @@
     ]
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.4.0",
     "@types/cli-progress": "^3.11.6",
     "@types/jest": "^30.0.0",
     "@types/pg": "^8.20.0",
@@ -73,6 +75,7 @@
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-jest": "^29.15.1",
     "eslint-plugin-security": "^4.0.0",
+    "execa": "^9.6.1",
     "husky": "^9.1.7",
     "jest": "^30.3.0",
     "lint-staged": "^16.4.0",

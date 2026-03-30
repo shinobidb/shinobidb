@@ -301,6 +301,16 @@ export class PostgresAdapter implements DatabaseAdapter {
 
     try {
       const columnDefs = columns.map((col) => {
+        // Convert SERIAL-like columns (integer + nextval default) back to SERIAL
+        if (
+          col.defaultValue !== null &&
+          typeof col.defaultValue === 'string' &&
+          col.defaultValue.startsWith('nextval(')
+        ) {
+          const serialType = col.dataType === 'bigint' ? 'BIGSERIAL' : 'SERIAL';
+          return `"${col.name}" ${serialType}${col.nullable ? '' : ' NOT NULL'}`;
+        }
+
         const parts = [`"${col.name}"`, col.dataType];
         if (!col.nullable) parts.push('NOT NULL');
         if (col.defaultValue !== null) parts.push(`DEFAULT ${col.defaultValue}`);

@@ -71,7 +71,7 @@ export class MySQLAdapter implements DatabaseAdapter {
       const [columns] = await pool.query<mysql.RowDataPacket[]>(
         `SELECT
           c.COLUMN_NAME,
-          c.DATA_TYPE,
+          c.COLUMN_TYPE,
           c.IS_NULLABLE,
           c.COLUMN_KEY,
           c.COLUMN_DEFAULT,
@@ -86,7 +86,7 @@ export class MySQLAdapter implements DatabaseAdapter {
 
       return columns.map((col) => ({
         name: col['COLUMN_NAME'] as string,
-        dataType: col['DATA_TYPE'] as string,
+        dataType: col['COLUMN_TYPE'] as string,
         nullable: col['IS_NULLABLE'] === 'YES',
         isPrimaryKey: col['COLUMN_KEY'] === 'PRI',
         isForeignKey: foreignKeyColumns.has(col['COLUMN_NAME'] as string),

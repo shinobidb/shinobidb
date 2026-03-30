@@ -126,7 +126,7 @@ describe('MySQLAdapter', () => {
         [
           {
             COLUMN_NAME: 'id',
-            DATA_TYPE: 'int',
+            COLUMN_TYPE: 'int',
             IS_NULLABLE: 'NO',
             COLUMN_KEY: 'PRI',
             COLUMN_DEFAULT: null,
@@ -134,7 +134,7 @@ describe('MySQLAdapter', () => {
           },
           {
             COLUMN_NAME: 'org_id',
-            DATA_TYPE: 'int',
+            COLUMN_TYPE: 'int',
             IS_NULLABLE: 'NO',
             COLUMN_KEY: 'MUL',
             COLUMN_DEFAULT: null,
