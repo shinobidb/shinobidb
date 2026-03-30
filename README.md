@@ -43,6 +43,20 @@ shinobidb mask --source-password secret --target-password secret
 
 ## CLI Commands
 
+### Connection Options
+
+All commands that connect to a database accept either individual flags or a connection URI:
+
+```bash
+# Individual flags
+shinobidb scan --host localhost --port 3306 --user root --password secret --schemas mydb
+
+# Connection URI (MySQL, PostgreSQL, MongoDB)
+shinobidb scan --uri mysql://root:secret@localhost:3306/mydb
+shinobidb scan --uri postgres://user:pass@localhost:5432/mydb
+shinobidb scan --uri mongodb://user:pass@localhost:27017/mydb
+```
+
 ### `shinobidb scan`
 
 Connects to the database, reads the schema, and detects PII columns by column name patterns.
@@ -50,6 +64,7 @@ Connects to the database, reads the schema, and detects PII columns by column na
 ```bash
 shinobidb scan \
   --host <host> --port <port> --user <user> --password <password> \
+  [--uri <uri>] \
   [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
   [--sample-content] [--json]
 ```
@@ -65,8 +80,9 @@ Runs a scan and generates a `shinobidb.yaml` config file with masking rules pre-
 ```bash
 shinobidb config \
   --host <host> --port <port> --user <user> --password <password> \
+  [--uri <uri>] \
   [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
-  [--min-confidence <0.0-1.0>] [-o <file>]
+  [--sample-content] [--min-confidence <0.0-1.0>] [-o <file>]
 ```
 
 ### `shinobidb mask`
@@ -76,10 +92,24 @@ Reads the config file, copies data from source to target, and applies masking st
 ```bash
 shinobidb mask \
   [-c <config-file>] \
-  --source-password <password> --target-password <password>
+  --source-password <password> --target-password <password> \
+  [--dry-run] [--sample-rows <n>] [--json] \
+  [--concurrency <n>] [--sync-schema] \
+  [--audit-log <file>] [--full-refresh] [--no-progress]
 ```
 
 Passwords are passed via CLI flags (not stored in the config file).
+
+| Option               | Description                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
+| `--dry-run`          | Preview masking results without writing to target. Shows before/after sample rows for each table |
+| `--sample-rows <n>`  | Number of sample rows to show in dry-run output (default: 3)                                     |
+| `--json`             | Output dry-run results as JSON                                                                   |
+| `--concurrency <n>`  | Number of tables to process in parallel (default: 1)                                             |
+| `--sync-schema`      | Auto-create missing tables in target from source schema                                          |
+| `--audit-log <file>` | Write audit log to file. Format auto-detected by extension (`.json` or `.csv`)                   |
+| `--full-refresh`     | Force full copy for incremental tables, resetting sync state                                     |
+| `--no-progress`      | Disable progress bar                                                                             |
 
 ### Schema Change Detection
 
@@ -156,6 +186,40 @@ tables:
       - name: notes
         strategy: scrub_text
 ```
+
+### Copy-Only Tables
+
+Tables without PII can be copied without masking:
+
+```yaml
+tables:
+  - schema: production_db
+    table: categories
+    copyOnly: true
+```
+
+Use `shinobidb config --include-all-tables` to generate config entries for all tables, with `copyOnly: true` for those where no PII is detected.
+
+### Incremental Sync
+
+Copy only rows changed since the last run, instead of a full copy each time:
+
+```yaml
+tables:
+  - schema: production_db
+    table: orders
+    incremental:
+      strategy: timestamp # or 'cursor'
+      column: updated_at # column to track changes
+    columns:
+      - name: customer_email
+        strategy: hash_email
+```
+
+- **`timestamp`** — Syncs rows where the column value is newer than the last run
+- **`cursor`** — Syncs rows where the column value is greater than the last cursor position (e.g. auto-increment ID)
+- Sync state is saved to `.shinobidb/sync-state.json`
+- Use `--full-refresh` to reset state and force a full copy
 
 ## Masking Strategies
 
@@ -248,7 +312,7 @@ The database adapter interface (`DatabaseAdapter`) abstracts away database-speci
 ```bash
 npm run typecheck    # TypeScript type checking
 npm run lint         # ESLint
-npm test             # Unit tests (270 tests)
+npm test             # Unit tests
 ```
 
 ### E2E Tests

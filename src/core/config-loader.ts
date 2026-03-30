@@ -4,7 +4,40 @@ import { parse } from 'yaml';
 
 import type { ShinobiConfig } from '../config/types.js';
 import { ConfigFileError, ConfigValidationError } from '../shared/errors.js';
+import type { DatabaseConnectionConfig } from '../shared/types.js';
 import { parseUri } from '../shared/uri-parser.js';
+
+export async function loadSourceConnection(filePath: string): Promise<DatabaseConnectionConfig> {
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf-8');
+  } catch (err) {
+    throw new ConfigFileError(`Failed to read config file: ${filePath}`, err);
+  }
+
+  let raw: unknown;
+  try {
+    raw = parse(content);
+  } catch (err) {
+    throw new ConfigFileError(`Failed to parse YAML: ${filePath}`, err);
+  }
+
+  if (raw === null || typeof raw !== 'object') {
+    throw new ConfigValidationError('Config must be a YAML object');
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  if (obj.version !== '1') {
+    throw new ConfigValidationError(
+      `Unsupported config version: ${String(obj.version)}. Expected "1"`,
+    );
+  }
+
+  validateConnectionConfig(obj.source, 'source');
+
+  return obj.source as DatabaseConnectionConfig;
+}
 
 export async function loadConfig(filePath: string): Promise<ShinobiConfig> {
   let content: string;

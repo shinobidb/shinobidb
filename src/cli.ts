@@ -13,7 +13,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 
 import { buildAuditRecord, writeAuditLog } from './core/audit-logger.js';
 import { generateConfig, configToYaml } from './core/config-generator.js';
-import { loadConfig } from './core/config-loader.js';
+import { loadConfig, loadSourceConnection } from './core/config-loader.js';
 import { validateConfigDeep } from './core/config-validator.js';
 import { executeMask, executeDryRun } from './core/mask-executor.js';
 import type { DryRunResult, ProgressInfo } from './core/mask-executor.js';
@@ -25,6 +25,7 @@ import { createDefaultDetectors } from './detection/detector-factory.js';
 import { ContentDetector } from './detection/detectors/content-detector.js';
 import { loadCustomStrategies } from './masking/custom-strategy-loader.js';
 import { createDefaultRegistry } from './masking/strategy-registry.js';
+import { resolveConnection } from './shared/connection-resolver.js';
 import {
   ShinobiError,
   DatabaseConnectionError,
@@ -32,8 +33,6 @@ import {
   ConfigValidationError,
 } from './shared/errors.js';
 import { logger, setLogLevel, getLogLevel } from './shared/logger.js';
-import type { DatabaseConnectionConfig, DatabaseType } from './shared/types.js';
-import { parseUri } from './shared/uri-parser.js';
 
 const program = new Command();
 
@@ -53,12 +52,13 @@ program.hook('preAction', (_thisCommand, actionCommand) => {
 program
   .command('scan')
   .description('Scan database for PII columns')
+  .option('-c, --config <file>', 'Read source connection from config file')
   .option('--uri <uri>', 'Connection URI (e.g. mysql://user:pass@host:3306/db)')
   .option('--host <host>', 'Database host')
   .option('--port <port>', 'Database port', parseInt)
   .option('--user <user>', 'Database user')
   .option('--password <password>', 'Database password')
-  .option('--type <type>', 'Database type (mysql, postgres, mongodb)', 'mysql')
+  .option('--type <type>', 'Database type (mysql, postgres, mongodb)')
   .option('--database <database>', 'Database name')
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
@@ -68,12 +68,13 @@ program
   .option('--diff [file]', 'Compare with a previous snapshot', false)
   .action(
     async (opts: {
+      config?: string;
       uri?: string;
       host?: string;
       port?: number;
       user?: string;
       password?: string;
-      type: string;
+      type?: string;
       database?: string;
       schemas?: string;
       tables?: string;
@@ -89,7 +90,14 @@ program
         typeof opts.diff === 'string' ? opts.diff : '.shinobidb/snapshot.json',
       );
 
-      const connConfig = resolveConnectionOpts(opts);
+      const configConnection = opts.config
+        ? await loadSourceConnection(resolve(opts.config))
+        : undefined;
+      const connConfig = await resolveConnection({
+        ...opts,
+        configConnection,
+        role: 'source',
+      });
       const adapter = createAdapter(connConfig);
 
       try {
@@ -171,12 +179,13 @@ program
 program
   .command('config')
   .description('Generate masking config YAML from scan results')
+  .option('-c, --config <file>', 'Read source connection from existing config file')
   .option('--uri <uri>', 'Connection URI (e.g. mysql://user:pass@host:3306/db)')
   .option('--host <host>', 'Source database host')
   .option('--port <port>', 'Source database port', parseInt)
   .option('--user <user>', 'Source database user')
   .option('--password <password>', 'Source database password')
-  .option('--type <type>', 'Database type (mysql, postgres, mongodb)', 'mysql')
+  .option('--type <type>', 'Database type (mysql, postgres, mongodb)')
   .option('--database <database>', 'Database name')
   .option('--schemas <schemas>', 'Comma-separated schema names')
   .option('--tables <tables>', 'Comma-separated table names')
@@ -186,12 +195,13 @@ program
   .option('-o, --output <file>', 'Output file path', 'shinobidb.yaml')
   .action(
     async (opts: {
+      config?: string;
       uri?: string;
       host?: string;
       port?: number;
       user?: string;
       password?: string;
-      type: string;
+      type?: string;
       database?: string;
       schemas?: string;
       tables?: string;
@@ -200,7 +210,14 @@ program
       sampleContent?: boolean;
       output: string;
     }) => {
-      const connConfig = resolveConnectionOpts(opts);
+      const configConnection = opts.config
+        ? await loadSourceConnection(resolve(opts.config))
+        : undefined;
+      const connConfig = await resolveConnection({
+        ...opts,
+        configConnection,
+        role: 'source',
+      });
       const adapter = createAdapter(connConfig);
 
       try {
@@ -316,14 +333,16 @@ program
     }) => {
       const config = await loadConfig(resolve(opts.config));
 
-      if (opts.dryRun) {
-        if (!opts.sourcePassword) {
-          throw new ConfigValidationError(
-            '--source-password is required. Use --source-password <password>',
-          );
-        }
-        config.source.password = opts.sourcePassword;
+      // Resolve source password: CLI flag > env var > config file > interactive prompt
+      config.source.password = (
+        await resolveConnection({
+          role: 'source',
+          password: opts.sourcePassword,
+          configConnection: config.source,
+        })
+      ).password;
 
+      if (opts.dryRun) {
         const source = createAdapter(config.source);
         const registry = createDefaultRegistry();
         if (config.customStrategies) {
@@ -344,18 +363,14 @@ program
           await source.destroy();
         }
       } else {
-        if (!opts.sourcePassword) {
-          throw new ConfigValidationError(
-            '--source-password is required. Use --source-password <password>',
-          );
-        }
-        if (!opts.targetPassword) {
-          throw new ConfigValidationError(
-            '--target-password is required. Use --target-password <password>',
-          );
-        }
-        config.source.password = opts.sourcePassword;
-        config.target.password = opts.targetPassword;
+        // Resolve target password: CLI flag > env var > config file > interactive prompt
+        config.target.password = (
+          await resolveConnection({
+            role: 'target',
+            password: opts.targetPassword,
+            configConnection: config.target,
+          })
+        ).password;
 
         const source = createAdapter(config.source);
         const target = createAdapter(config.target);
@@ -430,50 +445,6 @@ program
       }
     },
   );
-
-function resolveConnectionOpts(opts: {
-  uri?: string;
-  host?: string;
-  port?: number;
-  user?: string;
-  password?: string;
-  type?: string;
-  database?: string;
-}): DatabaseConnectionConfig {
-  if (opts.uri) {
-    const hasIndividual =
-      opts.host !== undefined || opts.port !== undefined || opts.user !== undefined;
-    if (hasIndividual) {
-      throw new ConfigValidationError('--uri and --host/--port/--user are mutually exclusive');
-    }
-    const parsed = parseUri(opts.uri);
-    if (opts.password) {
-      if (parsed.password) {
-        throw new ConfigValidationError(
-          'Password specified both in URI and via --password. These are mutually exclusive',
-        );
-      }
-      parsed.password = opts.password;
-    }
-    if (opts.database) {
-      parsed.database = opts.database;
-    }
-    return parsed;
-  }
-
-  if (!opts.host || !opts.user || opts.port === undefined) {
-    throw new ConfigValidationError('Either --uri or --host/--port/--user/--password is required');
-  }
-
-  return {
-    type: (opts.type ?? 'mysql') as DatabaseType,
-    host: opts.host,
-    port: opts.port,
-    user: opts.user,
-    password: opts.password ?? '',
-    database: opts.database,
-  };
-}
 
 function formatDryRunOutput(result: DryRunResult): void {
   logger.output(

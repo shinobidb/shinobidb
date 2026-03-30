@@ -1,5 +1,9 @@
-import { ConfigValidationError } from '../../shared/errors.js';
-import { validateConfig } from '../config-loader.js';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { ConfigValidationError, ConfigFileError } from '../../shared/errors.js';
+import { validateConfig, loadSourceConnection } from '../config-loader.js';
 
 const validConfig = {
   version: '1',
@@ -281,5 +285,149 @@ describe('validateConfig', () => {
     const cfg = clone(validConfig);
     (cfg as Record<string, unknown>).customStrategies = [''];
     expect(() => validateConfig(cfg)).toThrow('"customStrategies[0]" must be a non-empty string');
+  });
+});
+
+describe('loadSourceConnection', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = join(tmpdir(), `shinobidb-test-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should load source connection from valid config', async () => {
+    const yaml = `
+version: '1'
+source:
+  type: mysql
+  host: localhost
+  port: 3306
+  user: root
+  password: secret
+target:
+  type: mysql
+  host: staging
+  port: 3306
+  user: root
+  password: ''
+options:
+  batchSize: 1000
+  deterministic: true
+  seed: test
+  truncateTarget: true
+tables: []
+`;
+    const filePath = join(tmpDir, 'shinobidb.yaml');
+    await writeFile(filePath, yaml);
+
+    const result = await loadSourceConnection(filePath);
+    expect(result.type).toBe('mysql');
+    expect(result.host).toBe('localhost');
+    expect(result.port).toBe(3306);
+    expect(result.user).toBe('root');
+    expect(result.password).toBe('secret');
+  });
+
+  it('should work even when target has placeholder values', async () => {
+    const yaml = `
+version: '1'
+source:
+  type: postgres
+  host: db.example.com
+  port: 5432
+  user: admin
+  password: ''
+target:
+  type: postgres
+  host: '<TARGET_HOST>'
+  port: 5432
+  user: '<TARGET_USER>'
+  password: '<TARGET_PASSWORD>'
+options:
+  batchSize: 1000
+  deterministic: true
+  seed: test
+  truncateTarget: true
+tables: []
+`;
+    const filePath = join(tmpDir, 'shinobidb.yaml');
+    await writeFile(filePath, yaml);
+
+    const result = await loadSourceConnection(filePath);
+    expect(result.type).toBe('postgres');
+    expect(result.host).toBe('db.example.com');
+  });
+
+  it('should support URI in source', async () => {
+    const yaml = `
+version: '1'
+source:
+  uri: mysql://root:pass@localhost:3306/mydb
+target:
+  type: mysql
+  host: staging
+  port: 3306
+  user: root
+  password: ''
+options:
+  batchSize: 1000
+  deterministic: true
+  seed: test
+  truncateTarget: true
+tables: []
+`;
+    const filePath = join(tmpDir, 'shinobidb.yaml');
+    await writeFile(filePath, yaml);
+
+    const result = await loadSourceConnection(filePath);
+    expect(result.type).toBe('mysql');
+    expect(result.host).toBe('localhost');
+    expect(result.password).toBe('pass');
+    expect(result.database).toBe('mydb');
+  });
+
+  it('should throw on missing file', async () => {
+    await expect(loadSourceConnection(join(tmpDir, 'nonexistent.yaml'))).rejects.toThrow(
+      ConfigFileError,
+    );
+  });
+
+  it('should throw on invalid YAML', async () => {
+    const filePath = join(tmpDir, 'bad.yaml');
+    await writeFile(filePath, ': invalid: yaml: {{');
+
+    await expect(loadSourceConnection(filePath)).rejects.toThrow(ConfigFileError);
+  });
+
+  it('should throw on wrong version', async () => {
+    const yaml = `
+version: '2'
+source:
+  type: mysql
+  host: localhost
+  port: 3306
+  user: root
+  password: ''
+`;
+    const filePath = join(tmpDir, 'shinobidb.yaml');
+    await writeFile(filePath, yaml);
+
+    await expect(loadSourceConnection(filePath)).rejects.toThrow(ConfigValidationError);
+  });
+
+  it('should throw on invalid source block', async () => {
+    const yaml = `
+version: '1'
+source: null
+`;
+    const filePath = join(tmpDir, 'shinobidb.yaml');
+    await writeFile(filePath, yaml);
+
+    await expect(loadSourceConnection(filePath)).rejects.toThrow(ConfigValidationError);
   });
 });

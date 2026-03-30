@@ -43,6 +43,20 @@ shinobidb mask --source-password secret --target-password secret
 
 ## CLIコマンド
 
+### 接続オプション
+
+DB接続が必要なコマンドは、個別フラグまたは接続URIのどちらでも指定可能:
+
+```bash
+# 個別フラグ
+shinobidb scan --host localhost --port 3306 --user root --password secret --schemas mydb
+
+# 接続URI（MySQL, PostgreSQL, MongoDB）
+shinobidb scan --uri mysql://root:secret@localhost:3306/mydb
+shinobidb scan --uri postgres://user:pass@localhost:5432/mydb
+shinobidb scan --uri mongodb://user:pass@localhost:27017/mydb
+```
+
 ### `shinobidb scan`
 
 DBに接続してスキーマを読み取り、カラム名パターンからPIIカラムを検出します。
@@ -50,6 +64,7 @@ DBに接続してスキーマを読み取り、カラム名パターンからPII
 ```bash
 shinobidb scan \
   --host <host> --port <port> --user <user> --password <password> \
+  [--uri <uri>] \
   [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
   [--sample-content] [--json]
 ```
@@ -63,6 +78,7 @@ shinobidb scan \
 ```bash
 shinobidb config \
   --host <host> --port <port> --user <user> --password <password> \
+  [--uri <uri>] \
   [--type mysql|postgres|mongodb] [--database <db>] [--schemas <s1,s2>] [--tables <t1,t2>] \
   [--sample-content] [--min-confidence <0.0-1.0>] [-o <file>]
 ```
@@ -74,10 +90,24 @@ shinobidb config \
 ```bash
 shinobidb mask \
   [-c <config-file>] \
-  --source-password <password> --target-password <password>
+  --source-password <password> --target-password <password> \
+  [--dry-run] [--sample-rows <n>] [--json] \
+  [--concurrency <n>] [--sync-schema] \
+  [--audit-log <file>] [--full-refresh] [--no-progress]
 ```
 
 パスワードはCLIフラグで渡します（設定ファイルには保存されません）。
+
+| オプション           | 説明                                                                                           |
+| -------------------- | ---------------------------------------------------------------------------------------------- |
+| `--dry-run`          | ターゲットに書き込まずにマスキング結果をプレビュー。テーブルごとのbefore/afterサンプル行を表示 |
+| `--sample-rows <n>`  | dry-runで表示するサンプル行数（デフォルト: 3）                                                 |
+| `--json`             | dry-run結果をJSON形式で出力                                                                    |
+| `--concurrency <n>`  | 並列処理するテーブル数（デフォルト: 1）                                                        |
+| `--sync-schema`      | ソースのスキーマからターゲットに不足テーブルを自動作成                                         |
+| `--audit-log <file>` | 監査ログをファイルに出力。拡張子で形式を自動判定（`.json` または `.csv`）                      |
+| `--full-refresh`     | 増分同期テーブルの同期状態をリセットしてフルコピーを強制                                       |
+| `--no-progress`      | プログレスバーを無効化                                                                         |
 
 ### `shinobidb validate`
 
@@ -142,6 +172,40 @@ tables:
       - name: phone
         strategy: fake_phone
 ```
+
+### コピー専用テーブル
+
+PIIのないテーブルはマスキングなしでそのままコピー:
+
+```yaml
+tables:
+  - schema: production_db
+    table: categories
+    copyOnly: true
+```
+
+`shinobidb config --include-all-tables` を使うと、PII未検出のテーブルも `copyOnly: true` として設定に含まれます。
+
+### 増分同期
+
+毎回フルコピーする代わりに、前回以降の変更行のみをコピー:
+
+```yaml
+tables:
+  - schema: production_db
+    table: orders
+    incremental:
+      strategy: timestamp # または 'cursor'
+      column: updated_at # 変更追跡に使うカラム
+    columns:
+      - name: customer_email
+        strategy: hash_email
+```
+
+- **`timestamp`** — カラム値が前回実行時より新しい行を同期
+- **`cursor`** — カラム値が前回のカーソル位置より大きい行を同期（例: オートインクリメントID）
+- 同期状態は `.shinobidb/sync-state.json` に保存
+- `--full-refresh` で状態をリセットしてフルコピーを強制
 
 ## マスキング戦略
 
