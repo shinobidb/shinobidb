@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { open, unlink } from 'node:fs/promises';
 
@@ -8,6 +7,7 @@ import { ShinobiError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 import type { DatabaseConnectionConfig } from '../shared/types.js';
 
+import { commandExists, spawnAndWait } from './spawn-utils.js';
 import type { DumpRestoreProvider, SwapProvider } from './types.js';
 
 function buildConnectionArgs(config: DatabaseConnectionConfig): string[] {
@@ -21,14 +21,6 @@ function buildConnectionArgs(config: DatabaseConnectionConfig): string[] {
   return args;
 }
 
-async function commandExists(command: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn('which', [command], { stdio: 'ignore' });
-    proc.on('close', (code) => resolve(code === 0));
-    proc.on('error', () => resolve(false));
-  });
-}
-
 /**
  * Detect mysqldump major version.
  * Returns the major version number (e.g. 5, 8) or null if detection fails.
@@ -40,46 +32,6 @@ async function getMysqldumpMajorVersion(): Promise<number | null> {
   const output = result.stdout + result.stderr;
   const match = /Distrib (\d+)\.\d+/.exec(output);
   return match ? parseInt(match[1]!, 10) : null;
-}
-
-function spawnAndWait(
-  command: string,
-  args: string[],
-  options?: {
-    stdout?: NodeJS.WritableStream;
-    stdin?: NodeJS.ReadableStream;
-  },
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    proc.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    if (options?.stdin) {
-      options.stdin.pipe(proc.stdin);
-    } else {
-      proc.stdin.end();
-    }
-
-    if (options?.stdout) {
-      proc.stdout.pipe(options.stdout);
-    } else {
-      proc.stdout.on('data', (data: Buffer) => {
-        stdout += data.toString();
-      });
-    }
-
-    proc.on('close', (code) => {
-      resolve({ exitCode: code ?? 1, stdout, stderr });
-    });
-    proc.on('error', reject);
-  });
 }
 
 export class MySQLDumpRestore implements DumpRestoreProvider {

@@ -1,4 +1,4 @@
-import { MongoClient, type Document } from 'mongodb';
+import { MongoClient, ObjectId, type Document } from 'mongodb';
 
 import { DatabaseConnectionError, DatabaseQueryError } from '../../shared/errors.js';
 import { logger } from '../../shared/logger.js';
@@ -245,7 +245,9 @@ export class MongoDBAdapter implements DatabaseAdapter {
       const operations = rows.map((row) => {
         const filter: Record<string, unknown> = {};
         for (const pk of pkColumns) {
-          filter[pk] = row[pk];
+          // readRows converts ObjectId to string; convert back for _id queries
+          filter[pk] =
+            pk === '_id' && typeof row[pk] === 'string' ? new ObjectId(row[pk]) : row[pk];
         }
         return {
           updateOne: {
@@ -280,7 +282,9 @@ export class MongoDBAdapter implements DatabaseAdapter {
       const operations = rows.map((row) => {
         const filter: Record<string, unknown> = {};
         for (const pk of pkColumns) {
-          filter[pk] = row[pk];
+          // readRows converts ObjectId to string; convert back for _id queries
+          filter[pk] =
+            pk === '_id' && typeof row[pk] === 'string' ? new ObjectId(row[pk]) : row[pk];
         }
         const update: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(row)) {

@@ -8,6 +8,7 @@ import type { StrategyRegistry } from '../masking/strategy-registry.js';
 import { ShinobiError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 
+import { MongoDumpRestore, MongoSwap } from './mongodb-sync.js';
 import { MySQLDumpRestore, MySQLSwap } from './mysql-sync.js';
 import { PostgresDumpRestore, PostgresSwap } from './postgres-sync.js';
 import { generateOldDbName, generateTempDbName } from './temp-db.js';
@@ -20,14 +21,14 @@ import type {
 } from './types.js';
 import { executeUpdateMask } from './update-masker.js';
 
-function createDumpRestoreProvider(dbType: string): DumpRestoreProvider {
+function createDumpRestoreProvider(dbType: string, sourceDbName?: string): DumpRestoreProvider {
   switch (dbType) {
     case 'mysql':
       return new MySQLDumpRestore();
     case 'postgres':
       return new PostgresDumpRestore();
     case 'mongodb':
-      throw new ShinobiError('MongoDB sync is not yet implemented', 'UNSUPPORTED');
+      return new MongoDumpRestore(sourceDbName);
     default:
       throw new ShinobiError(`Unsupported database type: ${dbType}`, 'UNSUPPORTED');
   }
@@ -40,7 +41,7 @@ function createSwapProvider(dbType: string): SwapProvider {
     case 'postgres':
       return new PostgresSwap();
     case 'mongodb':
-      throw new ShinobiError('MongoDB sync is not yet implemented', 'UNSUPPORTED');
+      return new MongoSwap();
     default:
       throw new ShinobiError(`Unsupported database type: ${dbType}`, 'UNSUPPORTED');
   }
@@ -109,7 +110,7 @@ export async function executeSync(
     );
   }
 
-  const dumpProvider = createDumpRestoreProvider(dbType);
+  const dumpProvider = createDumpRestoreProvider(dbType, config.source.database);
   const swapProvider = createSwapProvider(dbType);
 
   const targetDb = config.target.database!;
@@ -121,8 +122,9 @@ export async function executeSync(
   const seed = options.seed ?? config.options.seed;
 
   // Determine dump file path
+  const dumpExt = dbType === 'mongodb' ? '.archive.gz' : '.sql';
   const dumpPath =
-    options.inputDump ?? options.keepDump ?? join(tmpdir(), `shinobidb_${tempDbName}.sql`);
+    options.inputDump ?? options.keepDump ?? join(tmpdir(), `shinobidb_${tempDbName}${dumpExt}`);
   const shouldDump = !options.inputDump;
   const shouldCleanDump = !options.keepDump && !options.inputDump;
 
@@ -199,10 +201,14 @@ export async function executeSync(
         tempAdapter = null;
 
         logger.info('Dry run: skipping swap. Temp database preserved for inspection.');
-        const inspectCmd =
-          dbType === 'postgres'
-            ? `psql -h ${config.target.host} -p ${config.target.port} -U ${config.target.user} ${tempDbName}`
-            : `mysql -h ${config.target.host} -P ${config.target.port} ${tempDbName}`;
+        let inspectCmd: string;
+        if (dbType === 'postgres') {
+          inspectCmd = `psql -h ${config.target.host} -p ${config.target.port} -U ${config.target.user} ${tempDbName}`;
+        } else if (dbType === 'mongodb') {
+          inspectCmd = `mongosh "mongodb://${config.target.host}:${config.target.port}/${tempDbName}"`;
+        } else {
+          inspectCmd = `mysql -h ${config.target.host} -P ${config.target.port} ${tempDbName}`;
+        }
         logger.info(`Inspect with: ${inspectCmd}`);
 
         return {
