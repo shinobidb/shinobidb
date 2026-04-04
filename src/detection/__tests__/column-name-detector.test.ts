@@ -85,25 +85,39 @@ describe('ColumnNameDetector', () => {
   });
 
   describe('phone detection', () => {
-    it.each(['phone', 'phone_number', 'telephone', 'tel', 'mobile', 'fax'])(
-      'should detect "%s" as phone',
-      async (columnName) => {
-        const results = await detector.detect([makeTable([{ name: columnName }])]);
-        expect(results).toHaveLength(1);
-        expect(results[0]!.category).toBe('phone');
-      },
-    );
+    it.each([
+      'phone',
+      'phone_number',
+      'telephone',
+      'tel',
+      'mobile',
+      'fax',
+      'home_tel',
+      'tel_number',
+      'office_fax',
+    ])('should detect "%s" as phone', async (columnName) => {
+      const results = await detector.detect([makeTable([{ name: columnName }])]);
+      expect(results).toHaveLength(1);
+      expect(results[0]!.category).toBe('phone');
+    });
   });
 
   describe('address detection', () => {
-    it.each(['address', 'street', 'city', 'state', 'zip_code', 'postal_code', 'country'])(
-      'should detect "%s" as address',
-      async (columnName) => {
-        const results = await detector.detect([makeTable([{ name: columnName }])]);
-        expect(results).toHaveLength(1);
-        expect(results[0]!.category).toBe('address');
-      },
-    );
+    it.each([
+      'address',
+      'street',
+      'city',
+      'state',
+      'zip_code',
+      'postal_code',
+      'country',
+      'home_city',
+      'billing_state',
+    ])('should detect "%s" as address', async (columnName) => {
+      const results = await detector.detect([makeTable([{ name: columnName }])]);
+      expect(results).toHaveLength(1);
+      expect(results[0]!.category).toBe('address');
+    });
   });
 
   describe('date_of_birth detection', () => {
@@ -175,6 +189,22 @@ describe('ColumnNameDetector', () => {
         ]),
       ];
       const results = await detector.detect(tables);
+      expect(results).toHaveLength(0);
+    });
+
+    it.each([
+      'company_id',
+      'hotel_name',
+      'pants_size',
+      'capacity',
+      'estate_type',
+      'hostel_rating',
+      'panel_id',
+      'expansion_rate',
+      'dobby_count',
+      'publicity',
+    ])('should not falsely detect "%s"', async (columnName) => {
+      const results = await detector.detect([makeTable([{ name: columnName }])]);
       expect(results).toHaveLength(0);
     });
   });

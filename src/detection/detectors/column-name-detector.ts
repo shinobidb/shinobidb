@@ -40,7 +40,7 @@ const PATTERN_RULES: PatternRule[] = [
   },
   // Phone
   {
-    pattern: /phone|telephone|tel_num|tel_number|tel|mobile|fax/i,
+    pattern: /phone|telephone|(?:^|[-_])tel(?:$|[-_])|mobile|(?:^|[-_])fax(?:$|[-_])/i,
     category: 'phone',
     confidence: 0.9,
     suggestedMaskingStrategy: 'fake_phone',
@@ -54,21 +54,22 @@ const PATTERN_RULES: PatternRule[] = [
   },
   // Address
   {
-    pattern: /address|street|city|state|province|zip[-_]?code|postal[-_]?code|country/i,
+    pattern:
+      /address|street|(?:^|[-_])city(?:$|[-_])|(?:^|[-_])state(?:$|[-_])|province|zip[-_]?code|postal[-_]?code|country/i,
     category: 'address',
     confidence: 0.85,
     suggestedMaskingStrategy: 'fake_address',
   },
   // Date of birth
   {
-    pattern: /birth[-_]?(day|date)?|dob|date[-_]?of[-_]?birth/i,
+    pattern: /birth[-_]?(day|date)?|(?:^|[-_])dob(?:$|[-_])|date[-_]?of[-_]?birth/i,
     category: 'date_of_birth',
     confidence: 0.9,
     suggestedMaskingStrategy: 'random_date',
   },
   // Credit card
   {
-    pattern: /credit[-_]?card|card[-_]?num(ber)?|cc[-_]?num(ber)?|pan/i,
+    pattern: /credit[-_]?card|card[-_]?num(ber)?|cc[-_]?num(ber)?|(?:^|[-_])pan(?:$|[-_])/i,
     category: 'credit_card',
     confidence: 0.95,
     suggestedMaskingStrategy: 'redact',
