@@ -183,6 +183,15 @@ export class MySQLDumpRestore implements DumpRestoreProvider {
   }
 }
 
+/**
+ * Rewrite the DEFINER clause in a CREATE VIEW/PROCEDURE/FUNCTION statement
+ * to use the target connection user instead of the original definer.
+ */
+export function rewriteDefiner(sql: string, targetUser: string): string {
+  // Matches: DEFINER=`user`@`host` or DEFINER = `user` @ `host`
+  return sql.replace(/DEFINER\s*=\s*`[^`]*`\s*@\s*`[^`]*`/i, `DEFINER=\`${targetUser}\`@\`%\``);
+}
+
 export class MySQLSwap implements SwapProvider {
   async swap(
     config: DatabaseConnectionConfig,
@@ -254,6 +263,8 @@ export class MySQLSwap implements SwapProvider {
         );
         if (viewDefs.length > 0) {
           let createViewSql = viewDefs[0]!['Create View'] as string;
+          // Rewrite DEFINER to target user
+          createViewSql = rewriteDefiner(createViewSql, config.user);
           // Rewrite database references from temp to target
           createViewSql = createViewSql.replace(
             new RegExp(`\`${tempDb}\`\\.`, 'g'),
@@ -283,6 +294,8 @@ export class MySQLSwap implements SwapProvider {
         if (defs.length > 0) {
           const key = routineType === 'PROCEDURE' ? 'Create Procedure' : 'Create Function';
           let createSql = defs[0]![key] as string;
+          // Rewrite DEFINER to target user
+          createSql = rewriteDefiner(createSql, config.user);
           createSql = createSql.replace(new RegExp(`\`${tempDb}\`\\.`, 'g'), `\`${targetDb}\`.`);
           await connection
             .query(`DROP ${routineType} IF EXISTS \`${targetDb}\`.\`${routineName}\``)

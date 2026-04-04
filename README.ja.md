@@ -40,8 +40,8 @@ shinobidb config --host localhost --port 3306 --user root --password secret --sc
 # 3. shinobidb.yaml を編集 — ターゲット接続先を設定
 #    生成ファイルの <TARGET_HOST>, <TARGET_PASSWORD> 等のプレースホルダーを実際の値に置換
 
-# 4. マスキング実行（パスワードを省略すると対話プロンプトで入力）
-shinobidb mask --source-password secret --target-password secret
+# 4. 同期: ダンプ → マスク → アトミックスワップ（パスワードを省略すると対話プロンプトで入力）
+shinobidb sync --source-password secret --target-password secret
 ```
 
 ### PostgreSQL
@@ -50,7 +50,7 @@ shinobidb mask --source-password secret --target-password secret
 shinobidb scan --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public
 shinobidb config --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public -o shinobidb.yaml
 # shinobidb.yaml を編集後:
-shinobidb mask --source-password secret --target-password secret
+shinobidb sync --source-password secret --target-password secret
 ```
 
 ### MongoDB
@@ -59,7 +59,7 @@ shinobidb mask --source-password secret --target-password secret
 shinobidb scan --type mongodb --host localhost --port 27017 --user admin --database mydb
 shinobidb config --type mongodb --host localhost --port 27017 --user admin --database mydb -o shinobidb.yaml
 # shinobidb.yaml を編集後:
-shinobidb mask --source-password secret --target-password secret
+shinobidb sync --source-password secret --target-password secret
 ```
 
 > **Note:** `--type` のデフォルトは `mysql` です。PostgreSQL/MongoDBの場合は必ず `--type` を指定してください。
@@ -127,7 +127,68 @@ shinobidb config \
   [--sample-content] [--min-confidence <0.0-1.0>] [-o <file>]
 ```
 
-### `shinobidb mask`
+### `shinobidb sync`
+
+**（推奨）** ネイティブダンプ → UPDATEマスク → アトミックスワップ。`mask`より高速・安全・シンプル。
+
+```bash
+shinobidb sync \
+  [-c <config-file>] \
+  --source-password <password> --target-password <password> \
+  [--dry-run] [--keep-old] [--keep-dump <path>] [--input-dump <path>] \
+  [--concurrency <n>] [--no-progress] \
+  [--audit-log <file>] [--json]
+```
+
+動作フロー:
+
+1. **ダンプ** — `mysqldump` / `pg_dump` / `mongodump` でソースDBの完全コピーを作成
+2. **リストア** — ダンプをターゲットサーバー上の一時DBにリストア
+3. **マスク** — 一時DBでPIIカラムを `UPDATE` 文でマスキング
+4. **スワップ** — アトミックスワップ: 一時DB → ターゲット、ターゲット → 旧DB（ダウンタイムゼロ）
+5. **クリーンアップ** — 旧DBを削除（`--keep-old` 指定時は保持）
+
+| オプション            | 説明                                                                         |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `--dry-run`           | ダンプ・リストア・マスクまで実行し、スワップはスキップ。一時DBは検証用に保持 |
+| `--keep-old`          | スワップ後に旧DBを保持（手動ロールバック用）                                 |
+| `--keep-dump <path>`  | ダンプファイルを指定パスに保存                                               |
+| `--input-dump <path>` | ソースからダンプせず、既存のダンプファイルからリストア                       |
+| `--concurrency <n>`   | 並列マスキングするテーブル数（デフォルト: 1）                                |
+| `--no-progress`       | プログレスバーを無効化                                                       |
+| `--audit-log <file>`  | 監査ログをファイルに出力（拡張子でJSON/CSVを自動判定）                       |
+| `--json`              | 結果をJSON形式で出力                                                         |
+| `--ci`                | CIモード: 対話プロンプトとプログレスバーを無効化。失敗時は終了コード1        |
+
+**なぜ mask より sync か？**
+
+- **高速** — ネイティブダンプ/リストアは行単位ストリーミングより大幅に速い
+- **完全** — ダンプにはインデックス、トリガー、ビュー、ストアドプロシージャが含まれる。`--sync-schema` 不要
+- **設定がシンプル** — PIIカラムだけ定義すればよい。非PIIテーブルはダンプで自動コピー
+- **ダウンタイムゼロ** — アトミックスワップにより同期中もターゲットDBは利用可能
+- `copyOnly` と `incremental` は無視される（全テーブルがダンプでコピー）
+
+#### `mask` から `sync` への移行
+
+`shinobidb mask` を使用中の場合、`sync` への移行は簡単です:
+
+1. スクリプト中の `shinobidb mask` を `shinobidb sync` に置換
+2. `--sync-schema` を削除（ダンプにスキーマが含まれる）
+3. `--full-refresh` を削除（sync は常にフルコピー）
+4. 設定の `copyOnly: true` は無視される — 全テーブルがダンプでコピー
+5. `incremental` は無視される — sync は常にフルダンプ
+
+既存の `shinobidb.yaml` はそのまま `sync` で動作します。変更はコマンド名だけです。
+
+> **前提条件:** `sync` にはネイティブDBツールのインストールが必要です:
+>
+> - **MySQL:** `mysqldump` と `mysql` クライアント
+> - **PostgreSQL:** `pg_dump` と `psql`
+> - **MongoDB:** `mongodump` と `mongorestore`
+
+### `shinobidb mask` _（非推奨）_
+
+> **Note:** `mask` は `sync` に置き換えられました。新規セットアップには `shinobidb sync` を使用してください。[mask から sync への移行](#mask-から-sync-への移行)を参照。
 
 設定ファイルに基づいてデータをコピーし、マスキング戦略を適用します。
 

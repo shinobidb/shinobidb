@@ -556,6 +556,7 @@ program
   .option('--no-progress', 'Disable progress bar')
   .option('--audit-log <file>', 'Write audit log to file (JSON or CSV based on extension)')
   .option('--json', 'Output result as JSON')
+  .option('--ci', 'CI mode: disable interactive prompts and progress bar')
   .action(
     async (opts: {
       config: string;
@@ -569,8 +570,20 @@ program
       progress: boolean;
       auditLog?: string;
       json?: boolean;
+      ci?: boolean;
     }) => {
       const config = await loadConfig(resolve(opts.config));
+
+      // In CI mode, disable interactive prompts by providing a passwordProvider that throws
+      const ciPasswordProvider = opts.ci
+        ? async (): Promise<string> => {
+            throw new ConfigValidationError(
+              'Interactive password prompt is disabled in --ci mode. ' +
+                'Provide passwords via --source-password/--target-password, ' +
+                'SHINOBIDB_SOURCE_PASSWORD/SHINOBIDB_TARGET_PASSWORD, or in the config file.',
+            );
+          }
+        : undefined;
 
       // Resolve passwords
       config.source.password = (
@@ -578,6 +591,7 @@ program
           role: 'source',
           password: opts.sourcePassword,
           configConnection: config.source,
+          passwordProvider: ciPasswordProvider,
         })
       ).password;
 
@@ -586,6 +600,7 @@ program
           role: 'target',
           password: opts.targetPassword,
           configConnection: config.target,
+          passwordProvider: ciPasswordProvider,
         })
       ).password;
 
@@ -595,7 +610,7 @@ program
         await loadCustomStrategies(config.customStrategies, registry, configDir);
       }
 
-      const showProgress = opts.progress && !opts.json && process.stderr.isTTY;
+      const showProgress = opts.progress && !opts.ci && !opts.json && process.stderr.isTTY;
       let progressBar: cliProgress.SingleBar | undefined;
 
       const onProgress = showProgress

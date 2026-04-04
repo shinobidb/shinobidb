@@ -40,8 +40,8 @@ shinobidb config --host localhost --port 3306 --user root --password secret --sc
 # 3. Edit shinobidb.yaml — set the target connection (host, port, user, database)
 #    The generated file has <TARGET_HOST>, <TARGET_PASSWORD> etc. as placeholders
 
-# 4. Run masking (passwords are prompted interactively if omitted)
-shinobidb mask --source-password secret --target-password secret
+# 4. Sync: dump → mask → atomic swap (passwords are prompted interactively if omitted)
+shinobidb sync --source-password secret --target-password secret
 ```
 
 ### PostgreSQL
@@ -50,7 +50,7 @@ shinobidb mask --source-password secret --target-password secret
 shinobidb scan --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public
 shinobidb config --type postgres --host localhost --port 5432 --user admin --database mydb --schemas public -o shinobidb.yaml
 # Edit shinobidb.yaml, then:
-shinobidb mask --source-password secret --target-password secret
+shinobidb sync --source-password secret --target-password secret
 ```
 
 ### MongoDB
@@ -59,7 +59,7 @@ shinobidb mask --source-password secret --target-password secret
 shinobidb scan --type mongodb --host localhost --port 27017 --user admin --database mydb
 shinobidb config --type mongodb --host localhost --port 27017 --user admin --database mydb -o shinobidb.yaml
 # Edit shinobidb.yaml, then:
-shinobidb mask --source-password secret --target-password secret
+shinobidb sync --source-password secret --target-password secret
 ```
 
 > **Note:** `--type` defaults to `mysql` when not specified. For PostgreSQL and MongoDB, always pass `--type`.
@@ -129,7 +129,68 @@ shinobidb config \
   [--sample-content] [--min-confidence <0.0-1.0>] [-o <file>]
 ```
 
-### `shinobidb mask`
+### `shinobidb sync`
+
+**(Recommended)** Native dump → UPDATE mask → atomic swap. Faster, safer, and simpler than `mask`.
+
+```bash
+shinobidb sync \
+  [-c <config-file>] \
+  --source-password <password> --target-password <password> \
+  [--dry-run] [--keep-old] [--keep-dump <path>] [--input-dump <path>] \
+  [--concurrency <n>] [--no-progress] \
+  [--audit-log <file>] [--json]
+```
+
+How it works:
+
+1. **Dump** — `mysqldump` / `pg_dump` / `mongodump` creates a full copy of the source database
+2. **Restore** — The dump is restored into a temporary database on the target server
+3. **Mask** — PII columns are masked via `UPDATE` statements in the temporary database
+4. **Swap** — Atomic swap: temp → target, target → old (zero downtime for the target database)
+5. **Cleanup** — The old database is dropped (unless `--keep-old`)
+
+| Option                | Description                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| `--dry-run`           | Dump, restore, and mask the temp DB but skip the swap. Temp DB is preserved for inspection |
+| `--keep-old`          | Keep the old database after swap (for manual rollback)                                     |
+| `--keep-dump <path>`  | Save the dump file to the specified path                                                   |
+| `--input-dump <path>` | Restore from an existing dump file instead of dumping from source                          |
+| `--concurrency <n>`   | Number of tables to mask in parallel (default: 1)                                          |
+| `--no-progress`       | Disable progress bar                                                                       |
+| `--audit-log <file>`  | Write audit log to file (JSON or CSV based on extension)                                   |
+| `--json`              | Output result as JSON                                                                      |
+| `--ci`                | CI mode: disable interactive prompts and progress bar. Exit code 1 on failure              |
+
+**Why sync over mask?**
+
+- **Faster** — Native dump/restore is significantly faster than row-by-row streaming
+- **Complete** — Dump includes indexes, triggers, views, stored procedures — no need for `--sync-schema`
+- **Simpler config** — Only PII columns need to be defined. Non-PII tables are copied automatically via dump
+- **Zero downtime** — Atomic swap means the target database is always available during sync
+- `copyOnly` and `incremental` config options are ignored (all tables are copied via dump)
+
+#### Migrating from `mask` to `sync`
+
+If you are currently using `shinobidb mask`, switching to `sync` is straightforward:
+
+1. Replace `shinobidb mask` with `shinobidb sync` in your scripts
+2. Remove `--sync-schema` (dump includes the schema)
+3. Remove `--full-refresh` (sync always does a full copy)
+4. `copyOnly: true` entries in your config are ignored — all tables are copied via dump
+5. `incremental` entries are ignored — sync always performs a full dump
+
+Your existing `shinobidb.yaml` works as-is with `sync`. The only change is the command name.
+
+> **Prerequisites:** `sync` requires native database tools to be installed on your system:
+>
+> - **MySQL:** `mysqldump` and `mysql` client
+> - **PostgreSQL:** `pg_dump` and `psql`
+> - **MongoDB:** `mongodump` and `mongorestore`
+
+### `shinobidb mask` _(deprecated)_
+
+> **Note:** `mask` is deprecated in favor of `sync`. Use `shinobidb sync` for new setups. See [Migrating from mask to sync](#migrating-from-mask-to-sync) above.
 
 Reads the config file, copies data from source to target, and applies masking strategies.
 
