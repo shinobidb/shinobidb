@@ -19,6 +19,13 @@ export interface DumpRestoreProvider {
 
   /** Check if a database exists */
   databaseExists(config: DatabaseConnectionConfig, dbName: string): Promise<boolean>;
+
+  /**
+   * Map source schema name to the equivalent schema name in the temp database.
+   * MySQL: database IS the schema, so returns tempDbName.
+   * PostgreSQL: schema is 'public' within the temp database, so returns sourceSchema as-is.
+   */
+  getTempSchema(sourceSchema: string, tempDbName: string): string;
 }
 
 export interface SwapProvider {

@@ -9,6 +9,7 @@ import { ShinobiError } from '../shared/errors.js';
 import { logger } from '../shared/logger.js';
 
 import { MySQLDumpRestore, MySQLSwap } from './mysql-sync.js';
+import { PostgresDumpRestore, PostgresSwap } from './postgres-sync.js';
 import { generateOldDbName, generateTempDbName } from './temp-db.js';
 import type {
   DumpRestoreProvider,
@@ -24,7 +25,7 @@ function createDumpRestoreProvider(dbType: string): DumpRestoreProvider {
     case 'mysql':
       return new MySQLDumpRestore();
     case 'postgres':
-      throw new ShinobiError('PostgreSQL sync is not yet implemented', 'UNSUPPORTED');
+      return new PostgresDumpRestore();
     case 'mongodb':
       throw new ShinobiError('MongoDB sync is not yet implemented', 'UNSUPPORTED');
     default:
@@ -37,7 +38,7 @@ function createSwapProvider(dbType: string): SwapProvider {
     case 'mysql':
       return new MySQLSwap();
     case 'postgres':
-      throw new ShinobiError('PostgreSQL sync is not yet implemented', 'UNSUPPORTED');
+      return new PostgresSwap();
     case 'mongodb':
       throw new ShinobiError('MongoDB sync is not yet implemented', 'UNSUPPORTED');
     default:
@@ -54,6 +55,7 @@ async function resolveMaskTables(
   config: ShinobiConfig,
   tempAdapter: DatabaseAdapter,
   tempDbName: string,
+  dumpProvider: DumpRestoreProvider,
 ): Promise<SyncMaskTable[]> {
   const maskTables: SyncMaskTable[] = [];
 
@@ -66,13 +68,16 @@ async function resolveMaskTables(
 
     if (tableConfig.columns.length === 0) continue;
 
-    // Resolve primary key from temp database.
-    // The dump restores tables into tempDbName, so use that as the schema.
-    const columns = await tempAdapter.getColumns(tempDbName, tableConfig.table);
+    // Map the source schema to the temp database's schema.
+    // MySQL: database IS the schema → use tempDbName.
+    // PostgreSQL: schema stays 'public' → use tableConfig.schema as-is.
+    const tempSchema = dumpProvider.getTempSchema(tableConfig.schema, tempDbName);
+
+    const columns = await tempAdapter.getColumns(tempSchema, tableConfig.table);
     const primaryKey = columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
 
     maskTables.push({
-      schema: tempDbName,
+      schema: tempSchema,
       table: tableConfig.table,
       columns: tableConfig.columns,
       primaryKey,
@@ -167,7 +172,7 @@ export async function executeSync(
     tempAdapter = createAdapter(tempConfig);
     await tempAdapter.connect();
 
-    const maskTables = await resolveMaskTables(config, tempAdapter, tempDbName);
+    const maskTables = await resolveMaskTables(config, tempAdapter, tempDbName, dumpProvider);
     let maskResultRows = 0;
     let maskResultDetails: SyncResult['tableDetails'] = [];
 
@@ -189,10 +194,16 @@ export async function executeSync(
       );
 
       if (options.dryRun) {
+        // Disconnect from temp before returning — prevents leaked connections
+        await tempAdapter.destroy();
+        tempAdapter = null;
+
         logger.info('Dry run: skipping swap. Temp database preserved for inspection.');
-        logger.info(
-          `Inspect with: mysql -h ${config.target.host} -P ${config.target.port} ${tempDbName}`,
-        );
+        const inspectCmd =
+          dbType === 'postgres'
+            ? `psql -h ${config.target.host} -p ${config.target.port} -U ${config.target.user} ${tempDbName}`
+            : `mysql -h ${config.target.host} -P ${config.target.port} ${tempDbName}`;
+        logger.info(`Inspect with: ${inspectCmd}`);
 
         return {
           tempDbName,

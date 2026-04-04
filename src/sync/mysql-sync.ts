@@ -205,6 +205,11 @@ export class MySQLDumpRestore implements DumpRestoreProvider {
     }
   }
 
+  getTempSchema(_sourceSchema: string, tempDbName: string): string {
+    // MySQL: database name IS the schema
+    return tempDbName;
+  }
+
   async databaseExists(config: DatabaseConnectionConfig, dbName: string): Promise<boolean> {
     const connection = await mysql.createConnection({
       host: config.host,
