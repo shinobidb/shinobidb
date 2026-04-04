@@ -82,6 +82,13 @@ export interface DatabaseAdapter {
     primaryKey: string | string[],
   ): Promise<void>;
 
+  updateRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void>;
+
   truncateTable(schema: string, table: string): Promise<void>;
 
   tableExists(schema: string, table: string): Promise<boolean>;

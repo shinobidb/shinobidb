@@ -324,6 +324,100 @@ describe('MySQLAdapter', () => {
     });
   });
 
+  describe('updateRows', () => {
+    beforeEach(async () => {
+      await adapter.connect();
+    });
+
+    it('should generate CASE-based UPDATE for single PK', async () => {
+      mockQuery.mockResolvedValueOnce([[], []]);
+
+      await adapter.updateRows(
+        'testdb',
+        'users',
+        [
+          { id: 1, email: 'masked1@example.com' },
+          { id: 2, email: 'masked2@example.com' },
+        ],
+        'id',
+      );
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE `testdb`.`users` SET'),
+        expect.any(Array),
+      );
+      // Should use CASE expression for efficiency
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain('CASE');
+      expect(sql).toContain('WHERE `id` IN');
+    });
+
+    it('should use transaction for composite PK', async () => {
+      const mockConnection = {
+        beginTransaction: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockResolvedValue([[], []]),
+        commit: jest.fn().mockResolvedValue(undefined),
+        rollback: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn(),
+      };
+      mockGetConnection.mockResolvedValueOnce(mockConnection);
+
+      await adapter.updateRows(
+        'testdb',
+        'order_items',
+        [{ order_id: 1, item_id: 10, note: 'masked' }],
+        ['order_id', 'item_id'],
+      );
+
+      expect(mockConnection.beginTransaction).toHaveBeenCalled();
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE'),
+        expect.any(Array),
+      );
+      expect(mockConnection.commit).toHaveBeenCalled();
+      expect(mockConnection.release).toHaveBeenCalled();
+    });
+
+    it('should rollback on error for composite PK', async () => {
+      const mockConnection = {
+        beginTransaction: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn().mockRejectedValue(new Error('DB error')),
+        commit: jest.fn().mockResolvedValue(undefined),
+        rollback: jest.fn().mockResolvedValue(undefined),
+        release: jest.fn(),
+      };
+      mockGetConnection.mockResolvedValueOnce(mockConnection);
+
+      await expect(
+        adapter.updateRows(
+          'testdb',
+          'order_items',
+          [{ order_id: 1, item_id: 10, note: 'masked' }],
+          ['order_id', 'item_id'],
+        ),
+      ).rejects.toThrow(DatabaseQueryError);
+
+      expect(mockConnection.rollback).toHaveBeenCalled();
+      expect(mockConnection.release).toHaveBeenCalled();
+    });
+
+    it('should skip if rows is empty', async () => {
+      await adapter.updateRows('testdb', 'users', [], 'id');
+      // connect query only, no UPDATE query
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('should skip if no non-PK columns to update', async () => {
+      mockQuery.mockResolvedValueOnce([[], []]);
+      await adapter.updateRows('testdb', 'users', [{ id: 1 }], 'id');
+      // No UPDATE should be issued
+      expect(mockQuery).not.toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE'),
+        expect.any(Array),
+      );
+    });
+  });
+
   describe('when not connected', () => {
     it('should throw DatabaseConnectionError for operations', async () => {
       await expect(adapter.getSchemas()).rejects.toThrow(DatabaseConnectionError);

@@ -278,6 +278,52 @@ export class PostgresAdapter implements DatabaseAdapter {
     }
   }
 
+  async updateRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const pool = this.getPool();
+    const identifier = `"${schema}"."${table}"`;
+    const pkColumns = Array.isArray(primaryKey) ? primaryKey : [primaryKey];
+
+    try {
+      const firstRow = rows[0]!;
+      const updateColumns = Object.keys(firstRow).filter((c) => !pkColumns.includes(c));
+
+      if (updateColumns.length === 0) return;
+
+      // Use transaction with individual UPDATEs for safety
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const row of rows) {
+          let paramIndex = 1;
+          const setClause = updateColumns.map((c) => `"${c}" = $${paramIndex++}`).join(', ');
+          const whereClause = pkColumns.map((c) => `"${c}" = $${paramIndex++}`).join(' AND ');
+          const values = [
+            ...updateColumns.map((c) => row[c] ?? null),
+            ...pkColumns.map((c) => row[c]),
+          ];
+          await client.query(`UPDATE ${identifier} SET ${setClause} WHERE ${whereClause}`, values);
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+
+      logger.debug(`Updated ${rows.length} rows in ${schema}.${table}`);
+    } catch (error) {
+      throw new DatabaseQueryError(`Failed to update rows in ${schema}.${table}`, error);
+    }
+  }
+
   async truncateTable(schema: string, table: string): Promise<void> {
     const pool = this.getPool();
     const identifier = `"${schema}"."${table}"`;

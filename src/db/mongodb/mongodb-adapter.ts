@@ -263,6 +263,46 @@ export class MongoDBAdapter implements DatabaseAdapter {
     }
   }
 
+  async updateRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const client = this.getClient();
+    const db = client.db(schema);
+    const collection = db.collection(table);
+    const pkColumns = Array.isArray(primaryKey) ? primaryKey : [primaryKey];
+
+    try {
+      const operations = rows.map((row) => {
+        const filter: Record<string, unknown> = {};
+        for (const pk of pkColumns) {
+          filter[pk] = row[pk];
+        }
+        const update: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(row)) {
+          if (!pkColumns.includes(key)) {
+            update[key] = value;
+          }
+        }
+        return {
+          updateOne: {
+            filter,
+            update: { $set: update as Document },
+          },
+        };
+      });
+
+      await collection.bulkWrite(operations);
+      logger.debug(`Updated ${rows.length} rows in ${schema}.${table}`);
+    } catch (error) {
+      throw new DatabaseQueryError(`Failed to update rows in ${schema}.${table}`, error);
+    }
+  }
+
   async truncateTable(schema: string, table: string): Promise<void> {
     const client = this.getClient();
     const db = client.db(schema);

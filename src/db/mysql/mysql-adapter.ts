@@ -250,6 +250,78 @@ export class MySQLAdapter implements DatabaseAdapter {
     }
   }
 
+  async updateRows(
+    schema: string,
+    table: string,
+    rows: Record<string, unknown>[],
+    primaryKey: string | string[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+
+    const pool = this.getPool();
+    const identifier = `\`${schema}\`.\`${table}\``;
+    const pkColumns = Array.isArray(primaryKey) ? primaryKey : [primaryKey];
+
+    try {
+      const firstRow = rows[0]!;
+      const updateColumns = Object.keys(firstRow).filter((c) => !pkColumns.includes(c));
+
+      if (updateColumns.length === 0) return;
+
+      // Build batch UPDATE using CASE expressions for efficiency
+      const pkPlaceholders = rows.map(() => '?');
+      const pkValues = rows.map((row) => (pkColumns.length === 1 ? row[pkColumns[0]!] : undefined));
+
+      if (pkColumns.length === 1) {
+        const pk = pkColumns[0]!;
+        const setClauses = updateColumns.map((col) => {
+          const cases = rows.map(() => `WHEN ? THEN ?`).join(' ');
+          return `\`${col}\` = CASE \`${pk}\` ${cases} END`;
+        });
+
+        const values: unknown[] = [];
+        for (const col of updateColumns) {
+          for (const row of rows) {
+            values.push(row[pk], row[col] ?? null);
+          }
+        }
+        values.push(...pkValues);
+
+        const sql = `UPDATE ${identifier} SET ${setClauses.join(', ')} WHERE \`${pk}\` IN (${pkPlaceholders.join(', ')})`;
+        await pool.query(sql, values);
+      } else {
+        // Composite PK: use transaction with individual UPDATEs
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          for (const row of rows) {
+            const setClause = updateColumns.map((c) => `\`${c}\` = ?`).join(', ');
+            const whereClause = pkColumns.map((c) => `\`${c}\` = ?`).join(' AND ');
+            const values = [
+              ...updateColumns.map((c) => row[c] ?? null),
+              ...pkColumns.map((c) => row[c]),
+            ];
+            await connection.query(
+              `UPDATE ${identifier} SET ${setClause} WHERE ${whereClause}`,
+              values,
+            );
+          }
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      }
+
+      logger.debug(`Updated ${rows.length} rows in ${schema}.${table}`);
+    } catch (error) {
+      if (error instanceof DatabaseQueryError) throw error;
+      throw new DatabaseQueryError(`Failed to update rows in ${schema}.${table}`, error);
+    }
+  }
+
   async truncateTable(schema: string, table: string): Promise<void> {
     const pool = this.getPool();
     const identifier = `\`${schema}\`.\`${table}\``;

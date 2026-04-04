@@ -36,6 +36,8 @@ import {
   ConfigValidationError,
 } from './shared/errors.js';
 import { logger, setLogLevel, getLogLevel } from './shared/logger.js';
+import { executeSync } from './sync/pipeline.js';
+import type { SyncProgress } from './sync/types.js';
 
 const program = new Command();
 
@@ -417,6 +419,9 @@ program
       progress: boolean;
       auditLog?: string;
     }) => {
+      logger.warn(
+        'DEPRECATED: "shinobidb mask" will be removed in a future version. Use "shinobidb sync" instead.',
+      );
       const config = await loadConfig(resolve(opts.config));
 
       // Resolve source password: CLI flag > env var > config file > interactive prompt
@@ -528,6 +533,151 @@ program
         } finally {
           await Promise.all([source.destroy(), target.destroy()]);
         }
+      }
+    },
+  );
+
+program
+  .command('sync')
+  .description('Sync and mask database using native dump → UPDATE mask → atomic swap')
+  .option('-c, --config <file>', 'Config file path', 'shinobidb.yaml')
+  .option('--source-password <password>', 'Source database password')
+  .option('--target-password <password>', 'Target database password')
+  .option('--dry-run', 'Dump, restore, and mask temp DB but skip swap (temp DB preserved)')
+  .option('--keep-old', 'Keep old database after swap (for rollback)')
+  .option('--keep-dump <path>', 'Save dump file to specified path')
+  .option('--input-dump <path>', 'Restore from existing dump file (skip dump phase)')
+  .option(
+    '--concurrency <n>',
+    'Number of tables to mask in parallel',
+    (v: string) => parseInt(v, 10),
+    1,
+  )
+  .option('--no-progress', 'Disable progress bar')
+  .option('--audit-log <file>', 'Write audit log to file (JSON or CSV based on extension)')
+  .option('--json', 'Output result as JSON')
+  .action(
+    async (opts: {
+      config: string;
+      sourcePassword?: string;
+      targetPassword?: string;
+      dryRun?: boolean;
+      keepOld?: boolean;
+      keepDump?: string;
+      inputDump?: string;
+      concurrency: number;
+      progress: boolean;
+      auditLog?: string;
+      json?: boolean;
+    }) => {
+      const config = await loadConfig(resolve(opts.config));
+
+      // Resolve passwords
+      config.source.password = (
+        await resolveConnection({
+          role: 'source',
+          password: opts.sourcePassword,
+          configConnection: config.source,
+        })
+      ).password;
+
+      config.target.password = (
+        await resolveConnection({
+          role: 'target',
+          password: opts.targetPassword,
+          configConnection: config.target,
+        })
+      ).password;
+
+      const registry = createDefaultRegistry();
+      if (config.customStrategies) {
+        const configDir = resolve(opts.config, '..');
+        await loadCustomStrategies(config.customStrategies, registry, configDir);
+      }
+
+      const showProgress = opts.progress && !opts.json && process.stderr.isTTY;
+      let progressBar: cliProgress.SingleBar | undefined;
+
+      const onProgress = showProgress
+        ? (progress: SyncProgress) => {
+            if (progress.phase === 'mask' && progress.totalRows != null) {
+              if (!progressBar) {
+                progressBar = new cliProgress.SingleBar(
+                  {
+                    format:
+                      '{bar} {percentage}% | {value}/{total} rows | {currentTable} | {tablesCompleted}/{tablesTotal} tables',
+                    hideCursor: true,
+                  },
+                  cliProgress.Presets.shades_classic,
+                );
+                progressBar.start(progress.totalRows || 1, 0, {
+                  currentTable: progress.currentTable ?? '',
+                  tablesCompleted: 0,
+                  tablesTotal: progress.tablesTotal ?? 0,
+                });
+              }
+              progressBar.update(Math.min(progress.processedRows ?? 0, progress.totalRows || 1), {
+                currentTable: progress.currentTable ?? '',
+                tablesCompleted: progress.tablesCompleted ?? 0,
+                tablesTotal: progress.tablesTotal ?? 0,
+              });
+            } else if (!progressBar) {
+              logger.info(`[${progress.phase}] ${progress.message}`);
+            }
+          }
+        : undefined;
+
+      const startTime = Date.now();
+      const result = await executeSync(config, registry, {
+        dryRun: opts.dryRun,
+        keepOld: opts.keepOld,
+        keepDump: opts.keepDump,
+        inputDump: opts.inputDump,
+        concurrency: opts.concurrency,
+        onProgress,
+      });
+      const durationMs = Date.now() - startTime;
+
+      if (progressBar) {
+        progressBar.stop();
+      }
+
+      if (opts.json) {
+        logger.output(JSON.stringify({ ...result, durationMs }, null, 2));
+      } else {
+        if (result.dryRun) {
+          logger.output(
+            `Dry run complete: ${result.rowsMasked} row(s) masked in ${result.tablesMasked} table(s)`,
+          );
+          logger.output(`Temp database preserved: ${result.tempDbName}`);
+        } else {
+          logger.output(
+            `Sync complete: ${result.rowsMasked} row(s) masked in ${result.tablesMasked} table(s) (${(durationMs / 1000).toFixed(1)}s)`,
+          );
+        }
+      }
+
+      if (opts.auditLog) {
+        const record = buildAuditRecord({
+          config,
+          result: {
+            tablesProcessed: result.tablesMasked,
+            rowsProcessed: result.rowsMasked,
+            rowsWritten: result.rowsMasked,
+            tableDetails: result.tableDetails.map((t) => ({
+              schema: t.schema,
+              table: t.table,
+              rowsProcessed: t.rowsMasked,
+              rowsWritten: t.rowsMasked,
+              copyOnly: false,
+              maskedColumns: t.maskedColumns,
+            })),
+          },
+          durationMs,
+          syncSchema: false,
+          concurrency: opts.concurrency,
+        });
+        await writeAuditLog(resolve(opts.auditLog), record);
       }
     },
   );

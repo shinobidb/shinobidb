@@ -59,6 +59,7 @@ describe('db types', () => {
       readRows: jest.fn(),
       writeRows: jest.fn(),
       upsertRows: jest.fn(),
+      updateRows: jest.fn(),
       truncateTable: jest.fn(),
       tableExists: jest.fn(),
       createTable: jest.fn(),
