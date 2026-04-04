@@ -29,6 +29,19 @@ async function commandExists(command: string): Promise<boolean> {
   });
 }
 
+/**
+ * Detect mysqldump major version.
+ * Returns the major version number (e.g. 5, 8) or null if detection fails.
+ */
+async function getMysqldumpMajorVersion(): Promise<number | null> {
+  const result = await spawnAndWait('mysqldump', ['--version']);
+  // Example: "mysqldump  Ver 10.13 Distrib 5.7.37, for ..."
+  // or: "mysqldump  Ver 8.0.33 Distrib 8.0.33, for ..."
+  const output = result.stdout + result.stderr;
+  const match = /Distrib (\d+)\.\d+/.exec(output);
+  return match ? parseInt(match[1]!, 10) : null;
+}
+
 function spawnAndWait(
   command: string,
   args: string[],
@@ -36,12 +49,13 @@ function spawnAndWait(
     stdout?: NodeJS.WritableStream;
     stdin?: NodeJS.ReadableStream;
   },
-): Promise<{ exitCode: number; stderr: string }> {
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    let stdout = '';
     let stderr = '';
     proc.stderr.on('data', (data: Buffer) => {
       stderr += data.toString();
@@ -56,11 +70,13 @@ function spawnAndWait(
     if (options?.stdout) {
       proc.stdout.pipe(options.stdout);
     } else {
-      proc.stdout.resume();
+      proc.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
     }
 
     proc.on('close', (code) => {
-      resolve({ exitCode: code ?? 1, stderr });
+      resolve({ exitCode: code ?? 1, stdout, stderr });
     });
     proc.on('error', reject);
   });
@@ -107,16 +123,25 @@ export class MySQLDumpRestore implements DumpRestoreProvider {
   }
 
   async dump(source: DatabaseConnectionConfig, outputPath: string): Promise<void> {
+    const majorVersion = await getMysqldumpMajorVersion();
+
     const args = [
       ...buildConnectionArgs(source),
       '--single-transaction',
       '--routines',
       '--triggers',
       '--events',
-      '--set-gtid-purged=OFF',
-      '--column-statistics=0',
-      source.database!,
     ];
+
+    // --set-gtid-purged=OFF: available in MySQL 5.6+, safe to always include
+    args.push('--set-gtid-purged=OFF');
+
+    // --column-statistics=0: only needed for mysqldump 8.0+ (which enables it by default)
+    if (majorVersion !== null && majorVersion >= 8) {
+      args.push('--column-statistics=0');
+    }
+
+    args.push(source.database!);
 
     const fileStream = createWriteStream(outputPath);
     try {

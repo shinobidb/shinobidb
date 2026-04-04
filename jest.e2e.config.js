@@ -20,4 +20,7 @@ export default {
   transformIgnorePatterns: ['node_modules/(?!(p-limit|yocto-queue)/)'],
   extensionsToTreatAsEsm: ['.ts'],
   testTimeout: 120_000,
+  // E2E tests use real DB connections; some internal pools (e.g. from sync pipeline)
+  // may not close cleanly in test teardown. forceExit prevents hanging.
+  forceExit: true,
 };

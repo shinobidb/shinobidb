@@ -53,6 +53,7 @@ function createSwapProvider(dbType: string): SwapProvider {
 async function resolveMaskTables(
   config: ShinobiConfig,
   tempAdapter: DatabaseAdapter,
+  tempDbName: string,
 ): Promise<SyncMaskTable[]> {
   const maskTables: SyncMaskTable[] = [];
 
@@ -65,12 +66,13 @@ async function resolveMaskTables(
 
     if (tableConfig.columns.length === 0) continue;
 
-    // Resolve primary key from temp database
-    const columns = await tempAdapter.getColumns(tableConfig.schema, tableConfig.table);
+    // Resolve primary key from temp database.
+    // The dump restores tables into tempDbName, so use that as the schema.
+    const columns = await tempAdapter.getColumns(tempDbName, tableConfig.table);
     const primaryKey = columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
 
     maskTables.push({
-      schema: tableConfig.schema,
+      schema: tempDbName,
       table: tableConfig.table,
       columns: tableConfig.columns,
       primaryKey,
@@ -165,7 +167,7 @@ export async function executeSync(
     tempAdapter = createAdapter(tempConfig);
     await tempAdapter.connect();
 
-    const maskTables = await resolveMaskTables(config, tempAdapter);
+    const maskTables = await resolveMaskTables(config, tempAdapter, tempDbName);
     let maskResultRows = 0;
     let maskResultDetails: SyncResult['tableDetails'] = [];
 
