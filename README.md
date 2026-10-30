@@ -95,6 +95,23 @@ For `mask`, target connection uses the `SHINOBIDB_TARGET_*` prefix (same keys: `
 
 > **Security:** Avoid passing passwords via CLI flags (`--password`, `--source-password`, `--target-password`) in production — they are visible to other processes via `ps`. Use environment variables or the interactive prompt instead.
 
+### Connecting via SSH Tunnel
+
+If your database is behind a firewall and only accessible via SSH, set up a local port forward first:
+
+```bash
+# Open SSH tunnel in background
+ssh -L 13306:<DB_HOST>:<DB_PORT> <SSH_USER>@<SSH_HOST> -i <SSH_KEY_PATH> -N -f
+
+# Run shinobidb through the tunnel
+shinobidb scan --host 127.0.0.1 --port 13306 --user <DB_USER> --password <DB_PASSWORD> --schemas <DB_NAME>
+
+# Close the tunnel when done
+lsof -ti:13306 | xargs kill
+```
+
+Use a local port (e.g. `13306`) that doesn't conflict with any local database instance. shinobidb connects to the forwarded local port — no special configuration needed.
+
 ### `shinobidb scan`
 
 Connects to the database, reads the schema, and detects PII columns by column name patterns.
